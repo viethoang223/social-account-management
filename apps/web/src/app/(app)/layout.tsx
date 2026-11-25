@@ -22,6 +22,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <nav className="nav" aria-label="Điều hướng chính">
           <NavLink href="/">Tổng quan</NavLink>
           <NavLink href="/library">Kho bài viết</NavLink>
+          {(can.review(s.role) || can.operate(s.role)) && <NavLink href="/research">Post Research</NavLink>}
           <NavLink href="/review" count={t.REVIEW_CONTENT} warn>Duyệt bài</NavLink>
           {can.review(s.role) && <NavLink href="/personas">Phân vai &amp; Radar</NavLink>}
           <NavLink href="/tasks" count={(t.TAKEOVER_ACCOUNT ?? 0) + (t.CONFIRM_RESULT ?? 0)}>Cần xử lý</NavLink>

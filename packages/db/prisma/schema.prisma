@@ -282,6 +282,7 @@ model ExtensionCommand {
   fencingToken  BigInt   @map("fencing_token")
   action        String
   caption       String
+  comment      Json?
   expiresAt     DateTime @map("expires_at") @db.Timestamptz(3)
   claimedAt     DateTime? @map("claimed_at") @db.Timestamptz(3)
   authorizedAt  DateTime? @map("authorized_at") @db.Timestamptz(3)
@@ -312,6 +313,9 @@ model CustomerRadar {
 
 model ExtensionRadarScan {
   id             String   @id @default(uuid()) @db.Uuid
+  kind           String   @default("RADAR")
+  limit          Int?
+  result         Json?
   targetId       String   @map("target_id") @db.Uuid
   installationId String  @map("installation_id") @db.Uuid
   url            String
@@ -332,6 +336,7 @@ model PersonaApproval {
   context     Json
   approvedBy  String   @map("approved_by")
   approvedAt  DateTime @map("approved_at") @db.Timestamptz(3)
+  comments    PublicationComment[]
 
   @@index([approvedAt])
   @@map("persona_approvals")
@@ -637,6 +642,7 @@ model Publication {
   reconcileTries Int               @default(0) @map("reconcile_tries")
   publishTries   Int               @default(0) @map("publish_tries")
   lastReason     String?           @map("last_reason")
+  commentAccessConfirmedAt DateTime? @map("comment_access_confirmed_at") @db.Timestamptz(3)
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -656,6 +662,7 @@ model PublicationComment {
   destinationId   String              @map("destination_id") @db.Uuid
   sourceCommentId String              @map("source_comment_id") @db.Uuid
   authorTargetId  String?             @map("author_target_id") @db.Uuid
+  personaApprovalId String?            @map("persona_approval_id") @db.Uuid
   text            String
   status          CommentReplayStatus @default(DRAFT)
   sendVersion     Int                 @default(0) @map("send_version")
@@ -667,6 +674,7 @@ model PublicationComment {
   destination TargetAccount  @relation("CommentDestination", fields: [destinationId], references: [id])
   source      SourceComment @relation(fields: [sourceCommentId], references: [id])
   author      TargetAccount? @relation("CommentAuthor", fields: [authorTargetId], references: [id])
+  personaApproval PersonaApproval? @relation(fields: [personaApprovalId], references: [id])
   @@unique([destinationId, sourceCommentId])
   @@unique([destinationId, externalId])
   @@index([destinationId, status])

@@ -9,7 +9,7 @@ const scanTtlMs = 150_000;
 export async function claimRadarScan(t: Tx, targetId: string, installationId: string, now: Date) {
   if (await activeKillSwitch(t, { targetId, connector: EXTENSION_CONNECTOR })) return null;
   const scan = await t.extensionRadarScan.findFirst({
-    where: { targetId, installationId, state: 'QUEUED', expiresAt: { gt: now } }, orderBy: { createdAt: 'asc' },
+    where: { targetId, installationId, state: 'QUEUED', kind: 'RADAR', expiresAt: { gt: now } }, orderBy: { createdAt: 'asc' },
   });
   if (!scan) return null;
   const lease = await acquireLease(t, {
@@ -26,7 +26,7 @@ export async function finishRadarScan(t: Tx, args: {
   id: string; installationId: string; targetId: string; report: z.infer<typeof RadarImport> | null; now: Date;
 }) {
   const { id, installationId, targetId, report, now } = args;
-  const scan = await t.extensionRadarScan.findFirst({ where: { id, installationId, targetId } });
+  const scan = await t.extensionRadarScan.findFirst({ where: { id, installationId, targetId, kind: 'RADAR' } });
   if (!scan) throw new ConflictException('Lượt Radar không thuộc profile này.');
   if (scan.state === 'COMPLETE' || scan.state === 'FAILED') return { ok: true };
   if (scan.state !== 'RUNNING' || scan.expiresAt <= now || scan.leaseToken === null) {

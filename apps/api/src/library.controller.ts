@@ -1,7 +1,7 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
-import { COMMENT_QUEUE_MS, COMMENT_READERS, COMMENT_STALL_MS, Q, SUCCESS, UNRESOLVED, workflowFor, type PublishSnapshot } from '@seedingsys/contracts';
-import { activeKillSwitch, audit, closeVariantReviewTasks, enqueue, freezeSnapshot, movePublication, moveSlot, openOperatorTask, Prisma, SnapshotBlockedError, tx, type Db, type Tx } from '@seedingsys/db';
+import { COMMENT_QUEUE_MS, COMMENT_READERS, COMMENT_STALL_MS, EXTENSION_CONNECTOR, Q, SUCCESS, UNRESOLVED, workflowFor, type PublishSnapshot } from '@seedingsys/contracts';
+import { activeKillSwitch, approvedPersona, audit, closeVariantReviewTasks, commentListener, enqueue, freezeSnapshot, movePublication, moveSlot, openOperatorTask, personaCommentAuthor, Prisma, SnapshotBlockedError, tx, type Db, type Tx } from '@seedingsys/db';
 import { commentBody, commentReplayBody, facebookCommentId, facebookPostId as postId, facebookPostLink, facebookUrl, hashObject, removeAdvertisingLinks, type Clock } from '@seedingsys/domain';
 import { Roles, type Principal } from './auth';
 import { CLOCK, DB } from './tokens';
@@ -16,7 +16,7 @@ const revisionFields = { id: true, text: true, albumTitle: true, incomplete: tru
 const variantFields = { id: true, targetId: true, caption: true, contentType: true, status: true, expiresAt: true, reviewReasons: true,
   snapshot: true, snapshotHash: true, revision: { select: revisionFields } } as const;
 const publicationFields = { id: true, variantId: true, targetId: true, status: true, permalink: true, verifiedAt: true,
-  lastReason: true, variant: { select: variantFields } } as const;
+  lastReason: true, commentAccessConfirmedAt: true, variant: { select: variantFields } } as const;
 
 function revisionView(value: Prisma.SourcePostRevisionGetPayload<{ select: typeof revisionFields }>) {
   const { raw, ...revision } = value;
@@ -87,14 +87,14 @@ export class LibraryController {
   }
 
   @Get('posts/:id')
-  async detail(@Param('id', ParseUUIDPipe) id: string) {
+  async detail(@Param('id', ParseUUIDPipe) id: string, @Actor() actor?: Principal) {
     const post = await this.db.sourcePost.findUnique({
       where: { id }, include: { source: { select: { ...profileFields, connector: true, mappings: {
         where: { enabled: true }, select: { target: { select: { ...profileFields, audience: true } } }, orderBy: { target: { code: 'asc' } },
       } } } },
     });
     if (!post?.latestRevisionId) throw new NotFoundException('Không tìm thấy bài.');
-    const [revision, variants, publications, scan, comments, authors] = await Promise.all([
+    const [revision, variants, publications, scan, comments, authors, roleApprovals] = await Promise.all([
       this.db.sourcePostRevision.findUniqueOrThrow({ where: { id: post.latestRevisionId }, select: revisionFields }),
       this.db.contentVariant.findMany({ where: { sourcePostId: id, status: { not: 'SUPERSEDED' } },
         orderBy: [{ targetId: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }], distinct: ['targetId'], select: variantFields }),
@@ -102,16 +102,28 @@ export class LibraryController {
       this.db.commentScan.findFirst({ where: { sourcePostId: id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
       this.db.sourceComment.findMany({ where: { sourcePostId: id }, orderBy: [{ position: 'asc' }, { id: 'asc' }],
         select: { id: true, externalId: true, parentExternalId: true, authorName: true, text: true, permalink: true, postedAt: true,
-          replays: { select: { destinationId: true, authorTargetId: true, text: true, status: true, permalink: true, externalId: true, sendDetail: true, updatedAt: true,
+          replays: { select: { destinationId: true, authorTargetId: true, personaApprovalId: true, text: true, status: true, permalink: true, externalId: true, sendDetail: true, updatedAt: true,
             author: { select: { code: true } },
           } } } }),
-      this.db.targetAccount.findMany({ where: { enabled: true, connector: { startsWith: 'fb-' } }, select: profileFields, orderBy: { code: 'asc' } }),
+      this.db.targetAccount.findMany({ where: { enabled: true, connector: { in: ['fb-web', EXTENSION_CONNECTOR] } },
+        select: { ...profileFields, connector: true, externalId: true }, orderBy: { code: 'asc' } }),
+      actor?.role === 'admin' || actor?.role === 'reviewer'
+        ? this.db.personaApproval.findMany({ orderBy: { approvedAt: 'desc' }, select: { id: true, context: true } })
+        : [],
     ]);
     const ids = [...new Set([...post.source.mappings.map(m => m.target.id), ...variants.map(v => v.targetId), ...publications.map(p => p.targetId)])];
     const targets = await this.db.targetAccount.findMany({ where: { id: { in: ids } }, select: { ...profileFields, audience: true }, orderBy: { code: 'asc' } });
     const { source, ...record } = post;
     const timedOut = scan?.status === 'RUNNING' && +this.clock.now() - +scan.updatedAt >= COMMENT_STALL_MS;
     return {
+      approvedRoles: roleApprovals.flatMap(approval => {
+        const role = approvedPersona(approval.context);
+        if (!role) return [];
+        const speaker = authors.find(a => a.connector === EXTENSION_CONNECTOR && a.code === role.speaker.code && a.externalId === role.speaker.uid);
+        const listener = authors.find(a => a.code === role.listener.code && a.externalId === role.listener.uid);
+        return speaker && listener ? [{ id: approval.id, speakerId: speaker.id, listenerId: listener.id,
+          label: `${role.speaker.alias} (${speaker.code}) → ${role.listener.alias} (${listener.code}) · ${role.relationship.self} / ${role.relationship.other}` }] : [];
+      }),
       post: { ...record, permalink: facebookUrl(record.permalink)?.href ?? null },
       source: { id: source.id, code: source.code, name: source.name, enabled: source.enabled, connector: source.connector },
       revision: revisionView(revision),
@@ -124,7 +136,7 @@ export class LibraryController {
         if (stale && r.status === 'SENDING') return { ...r, status: 'UNKNOWN', sendDetail: 'Chưa rõ kết quả. Đối chiếu trên Facebook.' };
         return { ...r, text };
       }) })),
-      authors,
+      authors: authors.map(({ externalId, ...author }) => author),
       destinations: targets.map(target => {
         const publication = publications.find(p => p.targetId === target.id);
         const permalink = facebookUrl(publication?.permalink);
@@ -133,6 +145,7 @@ export class LibraryController {
         return {
           target,
           publication: publication ? { id: publication.id, status: publication.status, verifiedAt: publication.verifiedAt,
+            commentAccessConfirmed: !!publication.commentAccessConfirmedAt, extensionTarget: authors.some(a => a.id === target.id && a.connector === EXTENSION_CONNECTOR),
             permalink: permalink?.href ?? null, directLink: !!facebookPostLink(publication.permalink), lastReason: publication.lastReason } : null,
           variant: variant ? variantView(variant, target.audience) : null,
         };
@@ -326,8 +339,8 @@ export class LibraryController {
     @Param('commentId', ParseUUIDPipe) commentId: string,
     @Body() body: unknown, @Actor() actor: Principal) {
     const input = parse(z.discriminatedUnion('action', [
-      z.object({ action: z.literal('draft'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid() }),
-      z.object({ action: z.literal('approve'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid() }),
+      z.object({ action: z.literal('draft'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid().optional(), personaApprovalId: z.string().uuid().optional() }),
+      z.object({ action: z.literal('approve'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid().optional(), personaApprovalId: z.string().uuid().optional() }),
       z.object({ action: z.literal('omit') }),
       z.object({ action: z.literal('send') }),
       z.object({ action: z.literal('posted'), permalink: z.string().max(2000).url() }),
@@ -402,13 +415,22 @@ export class LibraryController {
       } else {
         const text = input.action === 'omit' ? current?.text ?? comment.text : commentReplayBody(removeAdvertisingLinks(input.text), comment.text);
         if (input.action !== 'omit' && !text) throw new BadRequestException('Nhập nội dung bình luận.');
-        const authorTargetId = input.action === 'omit' ? current?.authorTargetId : input.authorTargetId;
-        if (input.action !== 'omit' && !await t.targetAccount.findFirst({
-          where: { id: input.authorTargetId, enabled: true, connector: { startsWith: 'fb-' } }, select: { id: true },
-        })) throw new ConflictException('Chọn một profile Facebook đang bật.');
+        let authorTargetId = current?.authorTargetId;
+        let personaApprovalId = current?.personaApprovalId ?? null;
+        if (input.action !== 'omit') {
+          personaApprovalId = input.personaApprovalId ?? null;
+          const listenerId = personaApprovalId ? await commentListener(t, targetId, comment) : null;
+          const author = personaApprovalId
+            ? (listenerId ? await personaCommentAuthor(t, personaApprovalId, listenerId) : null)
+            : (input.authorTargetId ? await t.targetAccount.findFirst({
+              where: { id: input.authorTargetId, enabled: true, connector: 'fb-web' }, select: { id: true },
+            }) : null);
+          if (!author) throw new ConflictException('Chọn profile cũ đang bật hoặc vai đã duyệt khớp UID và người nghe.');
+          authorTargetId = author.id;
+        }
         const status = input.action === 'approve' ? 'APPROVED' : input.action === 'omit' ? 'OMITTED' : 'DRAFT';
-        await t.publicationComment.upsert({ where, update: { status, text, authorTargetId, sendDetail: null },
-          create: { destinationId: targetId, sourceCommentId: commentId, status, text, authorTargetId } });
+        await t.publicationComment.upsert({ where, update: { status, text, authorTargetId, personaApprovalId, sendDetail: null },
+          create: { destinationId: targetId, sourceCommentId: commentId, status, text, authorTargetId, personaApprovalId } });
       }
       await audit(t, { entityType: 'source_post', entityId: id, action: 'comment_' + input.action, actor: actor.actor,
         at: this.clock.now(), data: { sourceCommentId: commentId, targetId, publicationId: pub?.id } });
@@ -466,7 +488,7 @@ export class LibraryController {
   private async queueCommentSend(t: Tx, { postId: id, sourceId, targetId, pub, comment, current, now, queuedParents }: {
     postId: string; sourceId: string; targetId: string; now: Date; queuedParents?: Set<string>;
     pub: Prisma.PublicationGetPayload<object> | null;
-    comment: { externalId: string; parentExternalId: string | null; text: string };
+    comment: { externalId: string; parentExternalId: string | null; text: string; sourcePostId: string };
     current: Prisma.PublicationCommentGetPayload<object> | null;
   }) {
     if (!current || !['APPROVED', 'FAILED', 'QUEUED'].includes(current.status) || !pub || !SUCCESS.includes(pub.status) || !facebookPostLink(pub.permalink)) {
@@ -474,16 +496,23 @@ export class LibraryController {
     }
     const text = commentReplayBody(current.text, comment.text);
     if (!text) throw new ConflictException('Cần duyệt bình luận có nội dung trước khi gửi.');
-    const author = current.authorTargetId && await t.targetAccount.findFirst({ where: { id: current.authorTargetId, enabled: true, connector: 'fb-web', profile: { isNot: null } } });
+    const author = current.authorTargetId && await t.targetAccount.findFirst({ where: { id: current.authorTargetId, enabled: true,
+      connector: { in: ['fb-web', EXTENSION_CONNECTOR] }, profile: { isNot: null } } });
     const target = await t.targetAccount.findUniqueOrThrow({ where: { id: targetId } });
     if (!author || !target.enabled) throw new ConflictException('Cần chọn hồ sơ Facebook đang bật và có trình duyệt đã đăng nhập.');
+    if (author.connector === EXTENSION_CONNECTOR) {
+      const listener = await commentListener(t, targetId, comment);
+      const approved = listener && current.personaApprovalId && await personaCommentAuthor(t, current.personaApprovalId, listener);
+      if (!approved || approved.id !== author.id) throw new ConflictException('Vai đã duyệt không còn khớp UID gửi hoặc người nghe.');
+    }
     for (const accountId of new Set([author.id, targetId])) {
-      if (await activeKillSwitch(t, { sourceId, targetId: accountId, connector: 'fb-web' })) {
+      if (await activeKillSwitch(t, { sourceId, targetId: accountId, connector: author.connector })) {
         throw new ConflictException('Luồng đăng bình luận đang bị tạm dừng.');
       }
     }
-    const snapshot = (await t.contentVariant.findUnique({ where: { id: pub.variantId }, select: { snapshot: true } }))?.snapshot as PublishSnapshot | null;
-    if (author.id !== targetId && (snapshot?.audience ?? target.audience) === 'ONLY_ME') {
+    const snapshot = (await t.contentVariant.findUnique({ where: { id: pub.variantId }, select: { snapshot: true } }))?.snapshot as unknown as PublishSnapshot | null;
+    if (author.id !== targetId && (snapshot?.audience ?? target.audience) === 'ONLY_ME'
+      && !(author.connector === EXTENSION_CONNECTOR && pub.commentAccessConfirmedAt)) {
       throw new ConflictException('Bài đích ở chế độ Chỉ mình tôi. Hồ sơ khác không thể bình luận.');
     }
     if (comment.parentExternalId && !queuedParents?.has(comment.parentExternalId)) {
@@ -502,6 +531,23 @@ export class LibraryController {
       data: { status: 'QUEUED', text, sendVersion: { increment: 1 }, sendDetail: null, updatedAt: now } });
     if (!updated.count) throw new ConflictException('Lượt gửi đã thay đổi. Tải lại bài.');
     await enqueue(t, Q.CommentPublish, { replayId: current.id, sendVersion: current.sendVersion + 1 });
+  }
+
+  @Patch('posts/:id/destinations/:targetId/comment-access')
+  @Roles('operator')
+  async confirmCommentAccess(@Param('id', ParseUUIDPipe) id: string, @Param('targetId', ParseUUIDPipe) targetId: string,
+    @Body() body: unknown, @Actor() actor: Principal) {
+    const { confirmed } = parse(z.object({ confirmed: z.boolean() }), body);
+    return tx(this.db, async t => {
+      await t.$queryRaw`SELECT id FROM source_posts WHERE id=${id}::uuid FOR UPDATE`;
+      const pub = await t.publication.findFirst({ where: { sourcePostId: id, targetId, status: { in: [...SUCCESS] },
+        post: { archivedAt: null }, target: { enabled: true, connector: EXTENSION_CONNECTOR } } });
+      if (!pub || !facebookPostLink(pub.permalink)) throw new ConflictException('Cần bài đích đã đăng và có liên kết trực tiếp.');
+      const now = this.clock.now();
+      await t.publication.update({ where: { id: pub.id }, data: { commentAccessConfirmedAt: confirmed ? now : null } });
+      await audit(t, { entityType: 'publication', entityId: pub.id, action: 'comment_access_changed', actor: actor.actor, at: now, data: { confirmed } });
+      return { ok: true };
+    });
   }
 
   @Patch('posts/:id/destinations/:targetId/permalink')

@@ -10,13 +10,14 @@ import { ImportController } from './import.controller';
 import { LibraryController } from './library.controller';
 import { OpsController } from './ops.controller';
 import { PersonasController } from './personas.controller';
+import { ResearchController } from './research.controller';
 import { createStore } from '@seedingsys/storage';
 import { CLOCK, CONFIG, DB, STORE } from './tokens';
 
 const cfg = loadConfig();
 
 @Module({
-  controllers: [OpsController, ConfigController, ImportController, LibraryController, ExtensionController, PersonasController],
+  controllers: [OpsController, ConfigController, ImportController, LibraryController, ExtensionController, PersonasController, ResearchController],
   providers: [
     { provide: CONFIG, useValue: cfg },
     { provide: DB, useValue: createDb(cfg.DATABASE_URL) },

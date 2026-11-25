@@ -1,6 +1,6 @@
 import { isConnectorError, type PublishSession } from '@seedingsys/connectors-core';
-import { COMMENT_PUBLISH_RETRIES, COMMENT_QUEUE_MS, SUCCESS, type PublishSnapshot } from '@seedingsys/contracts';
-import { accountResource, acquireLease, activeKillSwitch, assertLeaseHeld, audit, releaseLease, tx, type Tx } from '@seedingsys/db';
+import { COMMENT_PUBLISH_RETRIES, COMMENT_QUEUE_MS, EXTENSION_CONNECTOR, EXTENSION_FRESH_MS, SUCCESS, type PublishSnapshot } from '@seedingsys/contracts';
+import { accountResource, acquireLease, activeKillSwitch, assertLeaseHeld, audit, commentListener, personaCommentAuthor, releaseLease, tx, type Tx } from '@seedingsys/db';
 import { commentReplayBody, facebookCommentId, facebookPostId, facebookPostLink, facebookUrl, RetryLaterError } from '@seedingsys/domain';
 import type { BrowserCtx } from '../ctx';
 
@@ -18,11 +18,22 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
   let started = false;
   try {
     if (+ctx.clock.now() >= expiresAt) throw new Error('Hết thời gian chờ worker. Có thể gửi lại.');
-    if (author?.profile?.workerNode && author.profile.workerNode.name !== ctx.actor) {
+    if (author?.connector === 'fb-web' && author.profile?.workerNode && author.profile.workerNode.name !== ctx.actor) {
       throw new RetryLaterError('Chờ worker quản lý hồ sơ bình luận.');
     }
-    if (!author?.enabled || author.connector !== 'fb-web' || !author.profile || source.post.archivedAt) {
+    if (!author?.enabled || !['fb-web', EXTENSION_CONNECTOR].includes(author.connector) || !author.profile || source.post.archivedAt) {
       throw new Error('Bài nguồn hoặc hồ sơ đăng bình luận hiện không khả dụng.');
+    }
+    const remote = author.connector === EXTENSION_CONNECTOR;
+    if (remote) {
+      const listener = await commentListener(ctx.db, destinationId, source);
+      const approved = listener && replay.personaApprovalId && await personaCommentAuthor(ctx.db, replay.personaApprovalId, listener);
+      if (!approved || approved.id !== author.id) throw new Error('UID hiện tại không khớp vai đã duyệt.');
+      const node = author.profile.workerNode;
+      if (!node?.lastHeartbeatAt || +ctx.clock.now() - +node.lastHeartbeatAt > EXTENSION_FRESH_MS
+        || (node.capabilities as { commentProtocol?: number } | null)?.commentProtocol !== 1) {
+        throw new RetryLaterError('Chờ đúng Chrome profile với extension hỗ trợ bình luận.');
+      }
     }
     const publication = await ctx.db.publication.findUnique({ where: { targetId_sourcePostId: { targetId: destinationId, sourcePostId: source.sourcePostId } },
       include: { target: true, variant: { select: { snapshot: true } } } });
@@ -31,8 +42,10 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
       throw new Error('Bài đích chưa được xác nhận hoặc không còn khả dụng.');
     }
     const { url: post, id: postId } = destination;
-    const snapshot = publication.variant.snapshot as PublishSnapshot | null;
-    if (author.id !== destinationId && (snapshot?.audience ?? publication.target.audience) === 'ONLY_ME') {
+    if (remote) post.hostname = 'www.facebook.com';
+    const snapshot = publication.variant.snapshot as unknown as PublishSnapshot | null;
+    if (author.id !== destinationId && (snapshot?.audience ?? publication.target.audience) === 'ONLY_ME'
+      && !(remote && publication.commentAccessConfirmedAt)) {
       throw new Error('Bài đích ở chế độ Chỉ mình tôi. Hồ sơ khác không thể bình luận.');
     }
     const parent = source.parentExternalId ? await ctx.db.publicationComment.findFirst({
@@ -52,13 +65,15 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
       throw new Error('Chờ bình luận cha được đăng và có liên kết trên bài đích.');
     }
     const paused = (db: Tx = ctx.db) => Promise.all([...new Set([author.id, destinationId])].map(targetId =>
-      activeKillSwitch(db, { sourceId: source.post.sourceId, targetId, connector: 'fb-web' }))).then(results => results.some(Boolean));
+      activeKillSwitch(db, { sourceId: source.post.sourceId, targetId, connector: author.connector }))).then(results => results.some(Boolean));
     if (await paused()) throw new Error('Đang tạm dừng đăng trên hồ sơ Facebook.');
     lease = await acquireLease(ctx.db, { resource: accountResource(author.id), holder: ctx.workerId + ':comment-publish',
       ttlMs: 240_000, now: ctx.clock.now(), purpose: 'comment-publish' });
     if (!lease) throw new RetryLaterError('Hồ sơ đang bận. Bình luận sẽ chờ.');
     const connector = ctx.registry.publisher(author.connector);
-    session = await connector.openSession({ ...author, profileDir: author.profile.profileDir });
+    session = await connector.openSession({ ...author, profileDir: author.profile.profileDir, ...(remote && {
+      operation: { publicationId: publication.id, fencingToken: lease.token, comment: { replayId, sendVersion } },
+    }) });
     if (!session.postComment || await session.sessionState() !== 'OK' || !(await session.checkIdentity(author.externalId)).ok) {
       throw new Error('Hồ sơ Facebook chưa sẵn sàng hoặc đang đăng nhập sai tài khoản.');
     }
@@ -77,6 +92,7 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
         }
         if (await paused(t)) throw new Error('Đăng bình luận vừa được tạm dừng.');
         const valid = await t.publication.findFirst({ where: { id: publication.id, permalink: publication.permalink,
+          commentAccessConfirmedAt: publication.commentAccessConfirmedAt,
           status: { in: [...SUCCESS] }, target: { enabled: true } }, select: { id: true } });
         const authorReady = await t.targetAccount.findFirst({ where: { id: author.id, enabled: true, connector: author.connector,
           externalId: author.externalId, profile: { is: { id: author.profile!.id, profileDir: author.profile!.profileDir,

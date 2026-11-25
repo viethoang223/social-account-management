@@ -22,10 +22,10 @@ JSON tối đa 1 MB mỗi lần. Các trường mua hàng, kể cả trường t
 
 ## Phạm vi tích hợp
 
-Dashboard là chỗ nhập, ghép, giao việc và duyệt. Extension SeedingSys mới nhất trên `main` (manifest **1.1.0**) giữ nguyên giao thức đăng bài chữ theo UID và nhận thêm lệnh đọc Radar. Tải lại extension đang cài từ đúng thư mục trước khi thử. Các profile đã ghép tiếp tục dùng cùng mã nếu cập nhật tại chỗ.
+Dashboard là chỗ nhập, ghép, giao việc và duyệt. Extension SeedingSys trên `main` (manifest **1.2.0**) nhận việc đọc Radar, Post Research, đăng bài chữ và gửi bình luận. Các profile đã ghép tiếp tục dùng cùng mã khi tải lại extension tại chỗ.
 
 Trong **Radar khách hàng**, nhập link trang công khai của khách đã liên hệ rồi bấm **Giao việc quét Radar**. Dashboard tự chọn một đích bật, online, đã ghép và có khả năng quét Radar. Extension mở tab tạm để đọc đầu trang, bài có nhãn công khai và thông tin Giới thiệu hiển thị. Nó gửi lại điểm và bằng chứng đã giới hạn từ mô hình Radar gốc. Lượt quét chờ khi UID đó đang giữ khóa đăng bài. Xem tiến độ và kết quả ngay dưới biểu mẫu.
 
-Post Research và gửi bình luận qua extension vẫn là các luồng cần tích hợp tiếp. Nút **Duyệt phân vai** lưu context để sử dụng ở bước soạn hoặc kiểm tra, không tạo lượt tương tác.
+Bấm **Duyệt phân vai** để lưu cặp UID và cách xưng hô. Trong Kho bài viết, chọn vai đã duyệt ở bản nháp bình luận, duyệt nội dung rồi giao lượt gửi. [Post Research và bình luận](RESEARCH-COMMENTS.md)
 
 Mẫu JSON tương thích trong `tests/fixtures/personas/` dùng dữ liệu giả và được tạo từ bộ xuất của FB Desk `caf1130`. Kiểm thử kiểm tra cả hai chiều quan hệ, UID chưa ghép, điểm thiếu dữ liệu, dữ liệu mua hàng bị loại và tính nhất quán từ xem trước đến duyệt.

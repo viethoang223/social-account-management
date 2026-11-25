@@ -28,3 +28,4 @@ export function json(v: unknown): Prisma.InputJsonValue {
 export * from './content-ops';
 export * from './dedup';
 export * from './dispatch-publication';
+export * from './comment-persona';

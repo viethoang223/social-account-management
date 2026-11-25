@@ -3,24 +3,28 @@ import {
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { ACTIVE, EXTENSION_CONNECTOR, EXTENSION_VERSION } from '@seedingsys/contracts';
+import { ACTIVE, EXTENSION_CONNECTOR, EXTENSION_VERSION, ResearchReportSchema, SUCCESS, type ExtensionCommentContext, type PublishSnapshot } from '@seedingsys/contracts';
 import {
-  accountResource, activeKillSwitch, activeLease, assertLeaseHeld, audit, tx, type Db, type ExtensionCommand, type Tx,
+  accountResource, activeKillSwitch, activeLease, assertLeaseHeld, audit, commentListener, personaCommentAuthor, tx, type Db, type ExtensionCommand, type Tx,
 } from '@seedingsys/db';
-import type { Clock } from '@seedingsys/domain';
+import { facebookCommentId, facebookPostId, facebookPostLink, facebookUrl, type Clock } from '@seedingsys/domain';
 import { ProfileToken, Roles, type Principal } from './auth';
 import { CLOCK, DB } from './tokens';
 import { Actor, parse } from './util';
 import { RadarImport } from './persona-radar';
 import { claimRadarScan, finishRadarScan } from './radar-dispatch';
+import { claimResearch, finishResearch } from './research-dispatch';
 
 const profileUid = z.string().regex(/^\d{1,32}$/);
 const profile = { installationId: z.string().uuid(), uid: profileUid.nullable() };
 const request = z.discriminatedUnion('action', [
-  z.object({ ...profile, action: z.literal('poll'), radarProtocol: z.literal(1).optional() }),
+  z.object({ ...profile, action: z.literal('poll'), radarProtocol: z.literal(1).optional(), commentProtocol: z.literal(1).optional(),
+    researchProtocol: z.literal(1).optional() }),
   z.object({ ...profile, action: z.literal('authorize'), commandId: z.string().uuid() }),
-  z.object({ ...profile, action: z.literal('complete'), commandId: z.string().uuid(), outcome: z.enum(['prepared', 'clicked', 'blocked']) }),
+  z.object({ ...profile, action: z.literal('complete'), commandId: z.string().uuid(), outcome: z.enum(['prepared', 'clicked', 'blocked']),
+    receipt: z.object({ externalId: z.string().regex(/^[\w:-]{1,150}$/), permalink: z.string().max(2000).url() }).optional() }),
   z.object({ ...profile, action: z.literal('radar-complete'), commandId: z.string().uuid(), report: RadarImport.nullable() }),
+  z.object({ ...profile, action: z.literal('research-complete'), commandId: z.string().uuid(), report: ResearchReportSchema.nullable() }),
 ]);
 
 function tokenHash(token: string) {
@@ -32,6 +36,7 @@ async function lockTarget(t: Tx, id: string) {
 }
 
 async function commandIsCurrent(t: Tx, command: ExtensionCommand, now: Date) {
+  if (command.action.startsWith('comment-')) return commentCommandIsCurrent(t, command, now);
   const pub = await t.publication.findUnique({
     where: { id: command.publicationId },
     select: { targetId: true, status: true, contentType: true, post: { select: { sourceId: true, archivedAt: true } } },
@@ -44,6 +49,45 @@ async function commandIsCurrent(t: Tx, command: ExtensionCommand, now: Date) {
   });
   if (!mapping?.enabled) return false;
   if (await activeKillSwitch(t, { sourceId: pub.post.sourceId, targetId: command.targetId, connector: EXTENSION_CONNECTOR, contentType: 'TEXT' })) return false;
+  return assertLeaseHeld(t, { resource: accountResource(command.targetId), token: command.fencingToken }, now, 5_000);
+}
+
+async function commentCommandIsCurrent(t: Tx, command: ExtensionCommand, now: Date) {
+  const data = command.comment as ExtensionCommentContext | null;
+  if (!data) return false;
+  const replay = await t.publicationComment.findFirst({
+    where: { id: data.replayId, sendVersion: data.sendVersion, authorTargetId: command.targetId,
+      status: command.action === 'comment-commit' ? 'SENDING' : 'QUEUED', text: command.caption },
+    include: { source: { include: { post: true } } },
+  });
+  if (!replay?.personaApprovalId || replay.source.post.archivedAt) return false;
+  const pub = await t.publication.findFirst({
+    where: { id: command.publicationId, targetId: replay.destinationId, sourcePostId: replay.source.sourcePostId, status: { in: [...SUCCESS] },
+      target: { enabled: true } }, select: { permalink: true, commentAccessConfirmedAt: true,
+      target: { select: { audience: true } }, variant: { select: { snapshot: true } } },
+  });
+  const requested = facebookUrl(data.postUrl);
+  if (!pub || !requested || facebookPostId(requested) !== facebookPostLink(pub.permalink)?.id) return false;
+  const audience = (pub.variant.snapshot as unknown as PublishSnapshot | null)?.audience ?? pub.target.audience;
+  if (audience === 'ONLY_ME' && replay.destinationId !== command.targetId && !pub.commentAccessConfirmedAt) return false;
+  const listener = await commentListener(t, replay.destinationId, replay.source);
+  const author = listener && await personaCommentAuthor(t, replay.personaApprovalId, listener);
+  if (!author || author.id !== command.targetId) return false;
+  if (replay.source.parentExternalId) {
+    const parent = await t.publicationComment.findFirst({
+      where: { destinationId: replay.destinationId, status: 'POSTED',
+        source: { sourcePostId: replay.source.sourcePostId, externalId: replay.source.parentExternalId } },
+      select: { permalink: true },
+    });
+    const parentUrl = facebookUrl(parent?.permalink);
+    const root = facebookCommentId(parentUrl?.searchParams.get('comment_id'));
+    const reply = facebookCommentId(parentUrl?.searchParams.get('reply_comment_id'));
+    if (!root || data.parentId !== (reply ?? root) || root !== requested.searchParams.get('comment_id')
+      || (reply ?? null) !== requested.searchParams.get('reply_comment_id')) return false;
+  } else if (data.parentId || requested.searchParams.has('comment_id') || requested.searchParams.has('reply_comment_id')) return false;
+  for (const targetId of new Set([command.targetId, replay.destinationId])) {
+    if (await activeKillSwitch(t, { sourceId: replay.source.post.sourceId, targetId, connector: EXTENSION_CONNECTOR })) return false;
+  }
   return assertLeaseHeld(t, { resource: accountResource(command.targetId), token: command.fencingToken }, now, 5_000);
 }
 
@@ -175,23 +219,34 @@ export class ExtensionController {
         if (!binding.installationId) await t.extensionBinding.update({
           where: { targetId: target.id }, data: { installationId: input.installationId },
         });
-        await t.workerNode.update({ where: { id: nodeId }, data: { lastHeartbeatAt: now, capabilities: { radarProtocol: input.radarProtocol ?? 0 } } });
+        await t.workerNode.update({ where: { id: nodeId }, data: { lastHeartbeatAt: now, capabilities: {
+          radarProtocol: input.radarProtocol ?? 0, commentProtocol: input.commentProtocol ?? 0, researchProtocol: input.researchProtocol ?? 0,
+        } } });
         await t.extensionCommand.deleteMany({ where: { targetId: target.id, expiresAt: { lt: new Date(now.getTime() - 300_000) } } });
         const command = target.enabled ? await t.extensionCommand.findFirst({
-          where: { targetId: target.id, expiresAt: { gt: now }, claimedAt: null }, orderBy: { expiresAt: 'asc' },
+          where: { targetId: target.id, expiresAt: { gt: now }, claimedAt: null,
+            ...(input.commentProtocol !== 1 && { action: { in: ['prepare', 'commit'] } }) }, orderBy: { expiresAt: 'asc' },
         }) : null;
         if (!command || !await commandIsCurrent(t, command, now)) {
           const radar = target.enabled && input.radarProtocol === 1 ? await claimRadarScan(t, target.id, input.installationId, now) : null;
-          return { code: target.code, state: 'CONNECTED', command: radar };
+          const research = !radar && target.enabled && input.researchProtocol === 1
+            ? await claimResearch(t, target.id, input.installationId, now) : null;
+          return { code: target.code, state: 'CONNECTED', command: radar ?? research };
         }
         await t.extensionCommand.update({ where: { id: command.id }, data: { claimedAt: now } });
         return {
           code: target.code, state: 'CONNECTED',
-          command: { id: command.id, action: command.action, sessionId: command.sessionId, caption: command.caption,
+          command: { id: command.id, action: command.action, sessionId: command.sessionId, caption: command.caption, comment: command.comment,
             lifetimeMs: command.expiresAt.getTime() - now.getTime() },
         };
       }
       if (!binding.installationId) throw new UnauthorizedException('Profile chưa kết nối.');
+      if (input.action === 'research-complete') {
+        if (input.uid !== binding.uid) throw new ConflictException('Profile đã đổi UID.');
+        return finishResearch(t, {
+          id: input.commandId, installationId: binding.installationId, targetId: target.id, report: target.enabled ? input.report : null, now,
+        });
+      }
       if (input.action === 'radar-complete') {
         if (input.uid !== binding.uid) throw new ConflictException('Profile đã đổi UID.');
         return finishRadarScan(t, {
@@ -201,18 +256,21 @@ export class ExtensionController {
       const command = await t.extensionCommand.findFirst({ where: { id: input.commandId, targetId: target.id, claimedAt: { not: null } } });
       if (!command || command.expiresAt <= now) throw new ConflictException('Lệnh đã hết hạn.');
       if (input.action === 'authorize') {
-        if (input.uid !== binding.uid || !target.enabled || command.action !== 'commit' || command.authorizedAt || command.result
+        if (input.uid !== binding.uid || !target.enabled || !['commit', 'comment-commit'].includes(command.action) || command.authorizedAt || command.result
           || !await commandIsCurrent(t, command, now)) {
           throw new ConflictException('Lệnh đăng không còn được phép thực thi.');
         }
         await t.extensionCommand.update({ where: { id: command.id }, data: { authorizedAt: now } });
         return { lifetimeMs: Math.min(5_000, command.expiresAt.getTime() - now.getTime()) };
       }
-      if ((input.outcome === 'prepared' && (command.action !== 'prepare' || input.uid !== binding.uid))
-        || (input.outcome === 'clicked' && (command.action !== 'commit' || !command.authorizedAt))) {
+      if ((input.outcome === 'prepared' && (!['prepare', 'comment-prepare'].includes(command.action) || input.uid !== binding.uid))
+        || (input.outcome === 'clicked' && (!['commit', 'comment-commit'].includes(command.action) || !command.authorizedAt || input.uid !== binding.uid))
+        || (input.receipt && (command.action !== 'comment-commit' || input.outcome !== 'clicked'))) {
         throw new ConflictException('Kết quả không khớp với lệnh đã cấp.');
       }
-      if (!command.result) await t.extensionCommand.update({ where: { id: command.id }, data: { result: { outcome: input.outcome } } });
+      if (!command.result) await t.extensionCommand.update({ where: { id: command.id }, data: {
+        result: { outcome: input.outcome, ...(input.receipt && { receipt: input.receipt }) },
+      } });
       return { ok: true };
     });
   }

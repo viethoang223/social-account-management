@@ -71,7 +71,7 @@ Nếu người dùng chưa có URL dashboard dùng chung, triển khai thử m�
 
 1. Trên dashboard dự định vận hành, mở **Quản trị luồng đăng → Tài khoản đích → Nhập danh sách UID**. Dán một UID Facebook dạng số mỗi dòng, tối đa 200 UID mỗi lượt. Có thể tạo một đích bằng **+ Thêm đích → Facebook qua extension**. Mã `B...` là mã đích nội bộ.
 2. Chọn đích của UID cần ghép và **Tạo mã profile**. Dùng một mã riêng cho từng UID. Khi API báo mã đã gắn với bản cài khác, kiểm tra profile trước. Đổi hoặc thu hồi mã trong dashboard khi chuyển tài khoản sang bản cài khác.
-3. Trên đúng Chrome profile đang đăng nhập UID đó, mở `chrome://extensions`, bật **Chế độ dành cho nhà phát triển** và **Tải tiện ích đã giải nén** từ thư mục `extension/` của repo. Kiểm tra tên **SeedingSys Profile Connector**, phiên bản **1.0.0**. Mở popup, nhập URL gốc của dashboard và mã profile. Kiểm tra popup báo đúng mã `B...` và dashboard hiện **Profile đang kết nối**.
+3. Trên đúng Chrome profile đang đăng nhập UID đó, mở `chrome://extensions`, bật **Chế độ dành cho nhà phát triển** và **Tải tiện ích đã giải nén** từ thư mục `extension/` của repo. Với nhánh `main` dùng **SeedingSys Profile Connector 1.2.0** trở lên. Mở popup và kiểm tra URL dashboard, mã profile và trạng thái **Profile đang kết nối**. Khi đã ghép, bấm **Tải lại** extension tại chỗ để giữ mã ghép.
 4. Nếu Chrome chưa đăng nhập, để chủ tài khoản tự nhập mật khẩu và hoàn tất xác minh. Nếu sai UID, dừng và kiểm tra lại Chrome profile. Có thể cài SeedingSys bên cạnh FB Desk trong Chrome. Với via chuyển sang SeedingSys, kiểm tra lịch FB Desk của chính via đó đã dừng trước khi bật đích mới.
 5. Với thiết bị ở xa, dùng URL HTTPS của dashboard thay cho `localhost`. Chỉ chia sẻ mã profile được cấp cho via trên máy đó. Mã admin, mật khẩu PostgreSQL, cookie và dữ liệu Chrome không cần chuyển sang máy chạy extension. Giữ Chrome chạy với đúng tài khoản trong lúc cần nhận việc.
 
@@ -99,4 +99,4 @@ Chỉ đưa vào báo cáo đường dẫn, commit, URL, mã đích nội bộ, 
 
 Tài liệu bổ sung: [triển khai và vận hành](docs/DEPLOY.md) · [extension v1.0](docs/EXTENSION-1.0.md).
 
-Tính năng [Phân vai và Radar](docs/PERSONA-RADAR.md) nằm trên `main`, được bổ sung sau tag `v1.0.0`. Nếu người dùng cần tính năng này, dùng commit đã kiểm tra trên `main`, build lại web và áp dụng migration khi khởi động. Tải lại extension tại chỗ lên manifest **1.1.0** để nhận việc quét Radar. Sau khi đăng nhập, kiểm tra có mục **Phân vai & Radar**.
+Tính năng [Phân vai và Radar](docs/PERSONA-RADAR.md) và [Post Research và bình luận](docs/RESEARCH-COMMENTS.md) dùng bản web, API, extension và migration từ cùng commit trên `main`. Sau khi đăng nhập, kiểm tra có **Post Research** và **Phân vai & Radar**. Dịch vụ gửi bình luận cần cả `worker-core` để chuyển hàng đợi và `worker-browser` để điều phối phiên extension.

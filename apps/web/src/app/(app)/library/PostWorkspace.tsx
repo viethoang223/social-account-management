@@ -152,7 +152,11 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
 }) {
   const replay = comment.replays.find(r => r.destinationId === target.target.id);
   const parentReplay = parent?.replays.find(r => r.destinationId === target.target.id);
-  const savedAuthor = replay?.authorTargetId ?? detail.authors.find(a => a.id === target.target.id)?.id ?? '';
+  const legacyAuthors = detail.authors.filter(a => a.connector === 'fb-web');
+  const listenerId = comment.parentExternalId ? parentReplay?.authorTargetId : target.target.id;
+  const roles = detail.approvedRoles.filter(role => role.listenerId === listenerId);
+  const savedAuthor = replay?.personaApprovalId ? `role:${replay.personaApprovalId}`
+    : replay?.authorTargetId ?? (roles.length === 1 ? `role:${roles[0].id}` : legacyAuthors.find(a => a.id === target.target.id)?.id ?? '');
   const savedText = replay?.text ?? comment.text;
   const [edit, setEdit] = useState({ savedAuthor, savedText, author: savedAuthor, text: savedText });
   const currentEdit = edit.savedAuthor === savedAuthor && edit.savedText === savedText ? edit : undefined;
@@ -169,26 +173,31 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
   const inFlight = replay?.status === 'QUEUED' || replay?.status === 'SENDING';
   const canHandoff = !!replay && ['APPROVED', 'FAILED', 'UNKNOWN'].includes(replay.status);
   const canPost = canHandoff && !!destinationLink && !!publication?.directLink && SUCCESS.includes(publication.status);
-  const privatePost = (target.variant?.audience ?? target.target.audience) === 'ONLY_ME' && replay?.authorTargetId !== target.target.id;
-  const dirty = author !== replay?.authorTargetId || text.trim() !== replay?.text;
+  const privatePost = (target.variant?.audience ?? target.target.audience) === 'ONLY_ME' && replay?.authorTargetId !== target.target.id
+    && !(replay?.personaApprovalId && publication?.commentAccessConfirmed);
+  const approvedRole = roles.find(role => `role:${role.id}` === author);
+  const authorInput = approvedRole ? { personaApprovalId: approvedRole.id } : { authorTargetId: author };
+  const selected = !!approvedRole || legacyAuthors.some(a => a.id === author);
+  const dirty = author !== (replay?.personaApprovalId ? `role:${replay.personaApprovalId}` : replay?.authorTargetId) || text.trim() !== replay?.text;
   if (replay?.status === 'POSTED') return <p><a href={replay.permalink ?? '#'} target="_blank" rel="noreferrer">Xem bình luận đã ghi nhận trên {target.target.code} ↗</a></p>;
   return (
     <div className={styles.commentEditor}>
       {canReview && !inFlight && replay?.status !== 'UNKNOWN' && <>
-        <label>Profile đăng bình luận
+        <label>Vai gửi bình luận
           <select value={author} onChange={e => setEdit({ savedAuthor, savedText, text, author: e.target.value })}>
-            <option value="">Chọn profile</option>
-            {detail.authors.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+            <option value="">Chọn vai hoặc profile</option>
+            {roles.map(role => <option key={role.id} value={`role:${role.id}`}>{role.label}</option>)}
+            {legacyAuthors.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
           </select>
         </label>
-        {!detail.authors.length && <p className="muted">Cần một profile Facebook đang bật để phân công đăng.</p>}
+        {!roles.length && <p className="muted">Duyệt chiều xưng hô với {comment.parentExternalId ? 'người gửi bình luận cha' : 'chủ bài đích'} trong <a href="/personas">Phân vai &amp; Radar</a>.</p>}
         <label>Nội dung bình luận<textarea rows={3} maxLength={4000} value={text}
           onChange={e => setEdit({ savedAuthor, savedText, author, text: e.target.value })} /></label>
         <div className={styles.actions}>
-          <button type="button" disabled={submit.pending || !author || !text.trim() || !dirty}
-            onClick={() => submit.run(() => bff('PATCH', path, { action: 'draft', text, authorTargetId: author }))}>Lưu nháp</button>
-          <button type="button" className="primary" disabled={submit.pending || !author || !text.trim() || (replay?.status === 'APPROVED' && !dirty)}
-            onClick={() => submit.run(() => bff('PATCH', path, { action: 'approve', text, authorTargetId: author }), 'Đã duyệt bình luận')}>Duyệt bình luận</button>
+          <button type="button" disabled={submit.pending || !selected || !text.trim() || !dirty}
+            onClick={() => submit.run(() => bff('PATCH', path, { action: 'draft', text, ...authorInput }))}>Lưu nháp</button>
+          <button type="button" className="primary" disabled={submit.pending || !selected || !text.trim() || (replay?.status === 'APPROVED' && !dirty)}
+            onClick={() => submit.run(() => bff('PATCH', path, { action: 'approve', text, ...authorInput }), 'Đã duyệt bình luận')}>Duyệt bình luận</button>
           <ActionButton method="PATCH" path={path} body={{ action: 'omit' }} disabled={replay?.status === 'OMITTED'}>Bỏ qua</ActionButton>
         </div>
       </>}
@@ -267,6 +276,13 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
         <div className={styles.comparisonHeading}>
           <div><h2>Bình luận</h2><p className="muted">{comments.length} đã lưu{totals && dest && ` · ${totals.approved} chờ đăng · ${totals.posted} đã ghi nhận ở ${dest.target.code}`}</p></div>
           <div className={styles.actions}>
+            {canOperate && dest?.publication?.extensionTarget && dest.publication.directLink && SUCCESS.includes(dest.publication.status) &&
+              <ActionButton method="PATCH" path={`library/posts/${post.id}/destinations/${dest.target.id}/comment-access`}
+                body={{ confirmed: !dest.publication.commentAccessConfirmed }}
+                confirm={dest.publication.commentAccessConfirmed ? 'Dừng gửi bình luận từ UID khác vào bài này?'
+                  : 'Bạn đã kiểm tra bài trực tiếp trên Facebook và các UID tham gia có quyền xem và bình luận?'} >
+                {dest.publication.commentAccessConfirmed ? 'Gỡ xác nhận quyền bình luận' : 'Xác nhận UID khác có quyền bình luận'}
+              </ActionButton>}
             {canOperate && dest && canSendAll && <button type="button" className="primary" disabled={sendAll.pending}
               onClick={() => {
                 if (!window.confirm(`Gửi ${sendable} bình luận đã duyệt hoặc gửi lỗi lên bài của ${dest.target.code}? Bình luận gốc đi trước, phản hồi tự chờ bình luận cha.`)) return;

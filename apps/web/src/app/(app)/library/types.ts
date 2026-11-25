@@ -31,7 +31,8 @@ export interface Revision {
 
 export interface Destination {
   target: Profile & { audience: string };
-  publication: { id: string; status: string; permalink: string | null; directLink: boolean; verifiedAt: string | null; lastReason: string | null } | null;
+  publication: { id: string; status: string; permalink: string | null; directLink: boolean; verifiedAt: string | null; lastReason: string | null;
+    commentAccessConfirmed: boolean; extensionTarget: boolean } | null;
   variant: { id: string; caption: string | null; contentType: string; status: string; expiresAt: string | null; reviewReasons: string[];
     audience: string; snapshotHash: string | null; revision: Revision } | null;
 }
@@ -39,6 +40,7 @@ export interface Destination {
 export interface CommentReplay {
   destinationId: string;
   authorTargetId: string | null;
+  personaApprovalId: string | null;
   author: { code: string } | null;
   status: 'DRAFT' | 'APPROVED' | 'QUEUED' | 'SENDING' | 'FAILED' | 'UNKNOWN' | 'POSTED' | 'OMITTED';
   sendDetail: string | null;
@@ -64,7 +66,8 @@ export interface PostDetail {
   scan: { status: 'QUEUED' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'FAILED'; readCount: number; expectedCount: number | null; detail: string | null } | null;
   canScan: boolean;
   comments: SourceComment[];
-  authors: Profile[];
+  authors: Array<Profile & { connector: string }>;
+  approvedRoles: Array<{ id: string; speakerId: string; listenerId: string; label: string }>;
   destinations: Destination[];
 }
 

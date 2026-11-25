@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ConnectorError, type PublishConnector, type PublishSession, type TargetRef } from '@seedingsys/connectors-core';
-import { EXTENSION_CONNECTOR, EXTENSION_FRESH_MS, EXTENSION_VERSION } from '@seedingsys/contracts';
-import type { Db } from '@seedingsys/db';
+import { EXTENSION_CONNECTOR, EXTENSION_FRESH_MS, EXTENSION_VERSION, type ExtensionCommentContext } from '@seedingsys/contracts';
+import { json, type Db } from '@seedingsys/db';
 import type { Clock } from '@seedingsys/domain';
 
 export class ExtensionPublishConnector implements PublishConnector {
@@ -30,21 +30,23 @@ export class ExtensionPublishConnector implements PublishConnector {
 
     const sessionId = randomUUID();
     let draftCaption: string | undefined;
-    const send = async (action: 'prepare' | 'commit', caption: string) => {
-      const timeoutMs = action === 'commit' ? 50_000 : 75_000;
+    const send = async (action: 'prepare' | 'commit' | 'comment-prepare' | 'comment-commit', caption: string, comment?: ExtensionCommentContext) => {
+      const commits = action === 'commit' || action === 'comment-commit';
+      const timeoutMs = commits ? 50_000 : 75_000;
       const command = await this.db.extensionCommand.create({
-        data: { targetId: target.id, ...operation, sessionId, action, caption, expiresAt: new Date(this.clock.now().getTime() + timeoutMs) },
+        data: { targetId: target.id, publicationId: operation.publicationId, fencingToken: operation.fencingToken, sessionId,
+          action, caption, ...(comment && { comment: json(comment) }), expiresAt: new Date(this.clock.now().getTime() + timeoutMs) },
         select: { id: true },
       });
       const deadline = Date.now() + timeoutMs;
       try {
         while (Date.now() < deadline) {
           const current = await this.db.extensionCommand.findUnique({ where: { id: command.id }, select: { result: true } });
-          const result = current?.result as { outcome?: string } | null | undefined;
-          if (result?.outcome) return result.outcome;
+          const result = current?.result as { outcome?: string; receipt?: { externalId: string; permalink: string } } | null | undefined;
+          if (result?.outcome) return result;
           await delay(350);
         }
-        throw new ConnectorError('TRANSIENT', 'Profile không trả kết quả đúng hạn.', action === 'commit');
+        throw new ConnectorError('TRANSIENT', 'Profile không trả kết quả đúng hạn.', commits);
       } finally {
         await this.db.extensionCommand.updateMany({
           where: { id: command.id }, data: { expiresAt: this.clock.now(), caption: '' },
@@ -55,11 +57,21 @@ export class ExtensionPublishConnector implements PublishConnector {
     return {
       sessionState: async () => 'OK',
       checkIdentity: async expected => ({ ok: binding.uid === expected, observed: binding.uid }),
+      postComment: async ({ post, parentId, text }, beforeSubmit) => {
+        if (!operation.comment) throw new ConnectorError('UNSUPPORTED', 'Thiếu lượt bình luận đã duyệt.');
+        const comment = { ...operation.comment, postUrl: post.href, parentId };
+        if ((await send('comment-prepare', text, comment)).outcome !== 'prepared') {
+          throw new ConnectorError('UI_UNEXPECTED', 'Extension không xác nhận được đúng ô bình luận.');
+        }
+        await beforeSubmit();
+        const result = await send('comment-commit', text, comment);
+        return result.outcome === 'clicked' ? result.receipt ?? null : null;
+      },
       prepare: async (snapshot, media) => {
         if (snapshot.contentType !== 'TEXT' || snapshot.audience !== 'ONLY_ME' || media.length || snapshot.media.length || !snapshot.caption.trim()) {
           throw new ConnectorError('UNSUPPORTED', 'Extension 1.0 chỉ nhận bài chữ ở chế độ Chỉ mình tôi.');
         }
-        if (await send('prepare', snapshot.caption) !== 'prepared') {
+        if ((await send('prepare', snapshot.caption)).outcome !== 'prepared') {
           throw new ConnectorError('UI_UNEXPECTED', 'Profile chưa xác nhận nội dung hoặc đối tượng xem của bản nháp.');
         }
         draftCaption = snapshot.caption;
@@ -71,7 +83,7 @@ export class ExtensionPublishConnector implements PublishConnector {
       },
       commit: async draft => {
         if (draft.id !== sessionId || draftCaption === undefined) throw new ConnectorError('PREVIEW_MISMATCH', 'Bản nháp đã thay đổi.');
-        if (await send('commit', draftCaption) !== 'clicked') throw new ConnectorError('TRANSIENT', 'Cần đối soát kết quả của lệnh đăng.', true);
+        if ((await send('commit', draftCaption)).outcome !== 'clicked') throw new ConnectorError('TRANSIENT', 'Cần đối soát kết quả của lệnh đăng.', true);
         return { raw: { submittedBy: EXTENSION_CONNECTOR } };
       },
       verify: async () => ({ kind: 'NOT_FOUND', conclusive: false }),

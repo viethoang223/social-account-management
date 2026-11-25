@@ -1,5 +1,8 @@
 import { composer } from './composer.js';
+import { commentComposer } from './comment.js';
+import { facebookIdentity } from './facebook-url.js';
 import { scanRadar } from './radar-scan.js';
+import { scanResearch } from './research/job.js';
 
 const facebook = 'https://www.facebook.com';
 const pollAlarm = 'seedingsys-poll';
@@ -67,7 +70,7 @@ async function execute(config, command, uid, deadline) {
     await chrome.storage.session.set({ draft: { ...draft, documentId } });
     return 'prepared';
   }
-  if (command.action !== 'commit' || draft?.sessionId !== command.sessionId
+  if (command.action !== 'commit' || draft?.kind === 'comment' || draft?.sessionId !== command.sessionId
     || draft.uid !== uid || !draft.documentId) return 'blocked';
   const tabTarget = { tabId: draft.tabId, documentIds: [draft.documentId] };
   if (!await runComposer(tabTarget, 'inspect', command.caption, deadline)) return 'blocked';
@@ -81,19 +84,62 @@ async function execute(config, command, uid, deadline) {
   return 'clicked';
 }
 
+async function executeComment(config, command, uid, deadline) {
+  const { postUrl, parentId } = command.comment ?? {};
+  const identity = facebookIdentity(postUrl);
+  if (!identity?.startsWith('post:') || !uid || await observedUid() !== uid || deadline <= Date.now()) return { outcome: 'blocked' };
+  let { draft } = await chrome.storage.session.get('draft');
+  const input = { postUrl, parentId, uid, text: command.caption, deadline };
+  const run = async (target, action, data = input) => {
+    const [view] = await chrome.scripting.executeScript({ target, func: commentComposer, args: [action, data] });
+    return view;
+  };
+  if (command.action === 'comment-prepare') {
+    if (draft) await discard(draft);
+    const tab = await chrome.tabs.create({ url: postUrl, active: false });
+    if (tab.id === undefined) return { outcome: 'blocked' };
+    draft = { kind: 'comment', uid, sessionId: command.sessionId, tabId: tab.id, url: postUrl, expiry: Date.now() + 180_000 };
+    await chrome.storage.session.set({ draft });
+    const page = await loaded(tab.id, Math.min(deadline, Date.now() + 15_000));
+    if (facebookIdentity(page?.url) !== identity || await observedUid() !== uid) return { outcome: 'blocked' };
+    draft.url = page.url;
+    await chrome.storage.session.set({ draft });
+    const view = await run({ tabId: tab.id }, 'prepare');
+    if (!view?.documentId || !view.result?.ok || await observedUid() !== uid) return { outcome: 'blocked' };
+    await chrome.storage.session.set({ draft: { ...draft, documentId: view.documentId } });
+    return { outcome: 'prepared' };
+  }
+  if (command.action !== 'comment-commit' || draft?.kind !== 'comment' || draft.sessionId !== command.sessionId
+    || draft.uid !== uid || !draft.documentId) return { outcome: 'blocked' };
+  const target = { tabId: draft.tabId, documentIds: [draft.documentId] };
+  if (!(await run(target, 'inspect'))?.result?.ok) return { outcome: 'blocked' };
+  const requestedAt = Date.now();
+  const permit = await api(config, { action: 'authorize', commandId: command.id });
+  if (await observedUid() !== uid) return { outcome: 'blocked' };
+  await chrome.storage.session.remove('draft');
+  const result = (await run(target, 'commit', { ...input, deadline: Math.min(deadline, requestedAt + permit.lifetimeMs) }))?.result;
+  return result?.ok ? { outcome: 'clicked', ...(result.receipt && { receipt: result.receipt }) } : { outcome: 'blocked' };
+}
+
 async function poll() {
   await discardExpired();
   const { config } = await chrome.storage.local.get('config');
   if (!config) return { state: 'DISCONNECTED' };
   const uid = await observedUid();
   const started = Date.now();
-  const data = await api(config, { action: 'poll', radarProtocol: 1 });
+  const data = await api(config, { action: 'poll', radarProtocol: 1, commentProtocol: 1, researchProtocol: 1 });
   if (data.command) {
     const command = data.command;
     const deadline = started + command.lifetimeMs;
     if (command.action === 'radar-scan') {
       const report = await scanRadar(command.url, deadline, async () => !!uid && await observedUid() === uid).catch(() => null);
       await api(config, { action: 'radar-complete', commandId: command.id, report });
+    } else if (command.action === 'research-scan') {
+      const report = await scanResearch(command, deadline, async () => !!uid && await observedUid() === uid).catch(() => null);
+      await api(config, { action: 'research-complete', commandId: command.id, report });
+    } else if (['comment-prepare', 'comment-commit'].includes(command.action)) {
+      const result = await executeComment(config, command, uid, deadline).catch(() => ({ outcome: 'blocked' }));
+      await api(config, { action: 'complete', commandId: command.id, ...result });
     } else {
       const outcome = await execute(config, command, uid, deadline).catch(() => 'blocked');
       await api(config, { action: 'complete', commandId: command.id, outcome });

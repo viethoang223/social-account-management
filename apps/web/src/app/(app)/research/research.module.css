@@ -1,0 +1,14 @@
+.workspace { display: grid; gap: 1rem; max-width: 70rem; }
+.enqueue, .job { border: 1px solid var(--border, #d9dce1); border-radius: .75rem; padding: 1rem; }
+.enqueue { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(12rem, auto) auto; gap: .75rem; align-items: end; }
+.enqueue label, .importForm > label:first-child { display: grid; gap: .375rem; }
+.enqueue p { grid-column: 1 / -1; margin: 0; }
+.job { margin-block-end: .85rem; }
+.job h2, .results p { margin: 0; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: .625rem; margin-block: .55rem; }
+.url { overflow-wrap: anywhere; }
+.results { display: grid; gap: .8rem; }
+.results p, .caption { white-space: pre-wrap; overflow-wrap: anywhere; }
+.importForm { display: grid; gap: .5rem; margin-block-start: 1rem; max-width: 32rem; }
+.check { display: flex; align-items: center; gap: .45rem; }
+@media (max-width: 720px) { .enqueue { grid-template-columns: 1fr; } }

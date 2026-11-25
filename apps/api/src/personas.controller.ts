@@ -84,7 +84,7 @@ export class PersonasController {
       registry(this.db), pairedTargets(this.db),
       this.db.customerRadar.findMany({ select: radarSelection, orderBy: [{ analyzedAt: 'desc' }, { id: 'asc' }], take: 300 }),
       this.db.personaApproval.findMany({ orderBy: [{ approvedAt: 'desc' }, { id: 'asc' }], take: 20 }),
-      this.db.extensionRadarScan.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 20, include: { target: { select: { code: true } } } }),
+      this.db.extensionRadarScan.findMany({ where: { kind: 'RADAR' }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 20, include: { target: { select: { code: true } } } }),
     ]);
     const now = this.clock.now().getTime();
     return {
@@ -221,7 +221,7 @@ export class PersonasController {
       const now = this.clock.now();
       const active = { expiresAt: { gt: now }, state: { in: ['QUEUED', 'RUNNING'] } };
       const same = await t.extensionRadarScan.findFirst({
-        where: { url, ...active }, include: { target: { select: { code: true } } },
+        where: { kind: 'RADAR', url, ...active }, include: { target: { select: { code: true } } },
       });
       if (same) return { id: same.id, targetCode: same.target.code };
       const bindings = await pairedTargets(t);
