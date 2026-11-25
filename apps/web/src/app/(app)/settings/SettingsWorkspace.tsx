@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { AutoRefresh } from '@/components/client';
 import { Badge, Empty } from '@/components/ui';
 import { fmtTime, label } from '@/lib/format';
-import { MappingForm, Panel, SourceForm, TargetForm, sourceMethods, sourceStatus, type Capabilities, type MappingT, type SourceT, type TargetT } from './SettingsForms';
+import { ImportExtensionTargets, MappingForm, Panel, SourceForm, TargetForm, sourceMethods, sourceStatus, type Capabilities, type MappingT, type SourceT, type TargetT } from './SettingsForms';
 import styles from './settings.module.css';
 
 const views = { flows: 'Luồng A → B', sources: 'Nguồn quét', targets: 'Tài khoản đích' };
@@ -109,6 +109,7 @@ export function SettingsWorkspace({ sources, targets, mappings, capabilities }: 
       <SourceForm key={sourceId} source={bySource.get(sourceId)} />
     </div>}
     {view === 'targets' && <div className={styles.resource}>
+      <ImportExtensionTargets />
       <div className={styles.resourcePicker}><label htmlFor="admin-target">Tài khoản đích</label><select id="admin-target" value={targetId} onChange={e => setTargetId(e.target.value)}>
         {targets.map(t => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}<option value="new">+ Thêm đích</option>
       </select></div>

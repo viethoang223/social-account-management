@@ -320,7 +320,7 @@ export class OpsController {
       await t.$queryRaw`SELECT id FROM target_accounts WHERE id=${pub.targetId}::uuid FOR UPDATE`;
       let externalPostId: string | undefined;
       let permalink = url.href;
-      if (pub.target.connector === 'fb-web') {
+      if (pub.target.connector === 'fb-web' || pub.target.connector === 'fb-extension') {
         const link = facebookPostLink(permalink);
         if (!link) throw new BadRequestException('Dán liên kết trực tiếp tới bài đã đăng trên profile đích.');
         const externalId = link.id;

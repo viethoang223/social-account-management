@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kết nối SeedingSys</title>
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Kết nối SeedingSys</h1>
+    <form>
+      <label>Địa chỉ dashboard <input id="origin" type="url" required placeholder="http://localhost:3000"></label>
+      <label>Mã profile <input id="token" type="password" autocomplete="off" required></label>
+      <button type="submit">Kết nối</button>
+      <button type="button" id="check">Kiểm tra kết nối</button>
+    </form>
+    <p id="status" role="status"></p>
+  </main>
+</body>
+</html>

@@ -202,6 +202,8 @@ model TargetAccount {
 
   mappings     SourceTargetMapping[]
   profile      BrowserProfile?
+  extension    ExtensionBinding?
+  extensionCommands ExtensionCommand[]
   variants     ContentVariant[]
   slots        PublicationSlot[]
   publications Publication[]
@@ -259,6 +261,35 @@ model BrowserProfile {
   workerNode WorkerNode?   @relation(fields: [workerNodeId], references: [id])
 
   @@map("browser_profiles")
+}
+
+model ExtensionBinding {
+  targetId       String  @id @map("target_id") @db.Uuid
+  uid            String  @unique
+  tokenHash      String  @unique @map("token_hash")
+  installationId String? @map("installation_id") @db.Uuid
+  target         TargetAccount @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@map("extension_bindings")
+}
+
+model ExtensionCommand {
+  id            String   @id @default(uuid()) @db.Uuid
+  targetId      String   @map("target_id") @db.Uuid
+  publicationId String   @map("publication_id") @db.Uuid
+  sessionId     String   @map("session_id") @db.Uuid
+  fencingToken  BigInt   @map("fencing_token")
+  action        String
+  caption       String
+  expiresAt     DateTime @map("expires_at") @db.Timestamptz(3)
+  claimedAt     DateTime? @map("claimed_at") @db.Timestamptz(3)
+  authorizedAt  DateTime? @map("authorized_at") @db.Timestamptz(3)
+  result        Json?
+  target        TargetAccount @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, expiresAt])
+  @@unique([sessionId, action])
+  @@map("extension_commands")
 }
 
 model ConnectorRelease {

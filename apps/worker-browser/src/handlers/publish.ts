@@ -224,6 +224,7 @@ export async function handlePublish(ctx: BrowserCtx, p: { publicationId: string;
       audience: target.audience,
       uiLocale: target.uiLocale,
       profileDir: target.profile?.profileDir,
+      operation: { publicationId: pub0.id, fencingToken: lease.token },
     };
     if (!connector.capabilities(tref)[pub0.contentType]) throw new StopPreCommit('CANCELLED', `CAPABILITY_MISSING_${pub0.contentType}`);
 

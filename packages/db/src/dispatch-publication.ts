@@ -1,5 +1,5 @@
 import { Prisma, type ContentType, type SlotStatus } from '@prisma/client';
-import { ACTIVE, FB_WEB_PUBLISH_FORMATS, PUBLISH_QUEUE_BY_WORKFLOW, UNRESOLVED, workflowFor } from '@seedingsys/contracts';
+import { ACTIVE, EXTENSION_CONNECTOR, EXTENSION_FRESH_MS, FB_WEB_PUBLISH_FORMATS, PUBLISH_QUEUE_BY_WORKFLOW, UNRESOLVED, workflowFor } from '@seedingsys/contracts';
 import { HOUR, isPastLaunchWindow, type Clock } from '@seedingsys/domain';
 import { accountResource, activeLease } from './lease';
 import { activeKillSwitch } from './controls';
@@ -196,7 +196,8 @@ async function dispatch(t: Tx, ctx: DispatchContext, slotId: string, variantId?:
   if (kill) return wait(`KILL_SWITCH_${kill.scope}`);
 
   const node = target.profile?.workerNode;
-  if (!node?.lastHeartbeatAt || now.getTime() - node.lastHeartbeatAt.getTime() > freshMs) return wait('NO_WORKER');
+  const heartbeatLimit = target.connector === EXTENSION_CONNECTOR ? EXTENSION_FRESH_MS : freshMs;
+  if (!node?.lastHeartbeatAt || now.getTime() - node.lastHeartbeatAt.getTime() > heartbeatLimit) return wait('NO_WORKER');
 
   const release = await t.connectorRelease.findFirst({ where: { connector: target.connector, active: true }, orderBy: { releasedAt: 'desc' } });
   if (!release) return wait('NO_CONNECTOR_RELEASE');

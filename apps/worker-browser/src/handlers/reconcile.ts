@@ -1,6 +1,6 @@
 import type { PublishSnapshot } from '@seedingsys/contracts';
 import type { CommitSignal } from '@seedingsys/connectors-core';
-import { Q } from '@seedingsys/contracts';
+import { EXTENSION_CONNECTOR, Q } from '@seedingsys/contracts';
 import { accountResource, acquireLease, enqueue, heartbeatLease, movePublication, openOperatorTask, releaseLease, tx } from '@seedingsys/db';
 import { FencedOutError, RetryLaterError, captionFingerprint, hashObject } from '@seedingsys/domain';
 import type { BrowserCtx } from '../ctx';
@@ -88,6 +88,7 @@ export async function handleReconcile(ctx: BrowserCtx, p: { publicationId: strin
       await openOperatorTask(t, { kind: 'CONFIRM_RESULT', reason, targetId: pub.targetId, publicationId: pub.id, now });
       return 'NEEDS_OPERATOR';
     });
+    if (pub.target.connector === EXTENSION_CONNECTOR) return await needOperator('EXTENSION_MANUAL_VERIFICATION');
     const snapshot = pub.variant.snapshot as unknown as PublishSnapshot | null;
     if (!snapshot || hashObject(snapshot) !== pub.snapshotHash) return await needOperator('SNAPSHOT_MISMATCH');
     const previous = pub.committedAt ? await ctx.db.publicationAttempt.findFirst({

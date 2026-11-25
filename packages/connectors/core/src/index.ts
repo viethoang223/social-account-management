@@ -114,6 +114,8 @@ export interface TargetRef {
   audience: string;
   uiLocale: string;
   profileDir?: string;
+  /** Publication and account lease for connectors that dispatch across process boundaries. */
+  operation?: { publicationId: string; fencingToken: bigint };
 }
 
 export type CapabilitySet = Partial<Record<ContentType, boolean>>;

@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useId, useState, type ReactNode } from 'react';
-import { bff, useSubmit } from '@/components/client';
+import { AutoRefresh, bff, useSubmit } from '@/components/client';
 import { Badge } from '@/components/ui';
 import { fmtTime } from '@/lib/format';
 import styles from './settings.module.css';
@@ -16,7 +17,9 @@ export interface SourceT {
 
 export interface TargetT {
   id: string; code: string; name: string; externalId: string; connector: string; audience: string;
-  enabled: boolean; styleProfile: Record<string, unknown>; profile: { id: string } | null;
+  enabled: boolean; styleProfile: Record<string, unknown>;
+  profile: { id: string; workerNode?: { lastHeartbeatAt: string | null } | null } | null;
+  extension?: { installationId: string | null } | null;
 }
 
 export interface MappingT {
@@ -155,20 +158,84 @@ function targetDraft(t?: TargetT) {
   return { code: t?.code ?? '', name: t?.name ?? '', externalId: t?.externalId ?? '', connector: t?.connector ?? 'fake', audience: t?.audience ?? 'ONLY_ME', enabled: t?.enabled ?? true };
 }
 
+function ExtensionPairing({ target }: { target: TargetT }) {
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const last = target.profile?.workerNode?.lastHeartbeatAt;
+  const online = Boolean(last && Date.now() - Date.parse(last) < 75_000);
+  const request = async (action: 'key' | 'revoke') => {
+    setBusy(true);
+    setToken('');
+    const result = await bff<{ token?: string }>('POST', `targets/${target.id}/extension/${action}`);
+    if (result.ok) {
+      setToken(result.data.token ?? '');
+      setError('');
+    } else {
+      setError(result.error);
+    }
+    setBusy(false);
+  };
+  return (
+    <div className={styles.scanStatus}>
+      <AutoRefresh seconds={10} />
+      <p>{online ? 'Profile đang kết nối' : target.extension?.installationId ? 'Profile chưa online hoặc sai UID' : 'Chờ kết nối profile'}</p>
+      <button type="button" disabled={busy} onClick={() => void request('key')}>{target.extension ? 'Đổi mã profile' : 'Tạo mã profile'}</button>
+      {target.extension && <button type="button" disabled={busy} onClick={() => void request('revoke')}>Thu hồi mã</button>}
+      {token && <label>Mã dùng trong extension của đúng UID
+        <input aria-label="Mã profile mới" type="text" className="mono" readOnly value={token} onFocus={event => event.currentTarget.select()} />
+      </label>}
+      {error && <p role="alert">{error}</p>}
+      <p>Bản 1.0 hỗ trợ bài chữ ở chế độ Chỉ mình tôi. Xác nhận liên kết ở mục Cần xử lý sau khi đăng.</p>
+    </div>
+  );
+}
+
+export function ImportExtensionTargets() {
+  const router = useRouter();
+  const [uids, setUids] = useState('');
+  const [message, setMessage] = useState('');
+  const [pending, setPending] = useState(false);
+  return (
+    <details className={styles.advanced}>
+      <summary>Nhập danh sách UID</summary>
+      <form onSubmit={async event => {
+        event.preventDefault();
+        setPending(true);
+        const result = await bff<{ added: unknown[]; skipped: string[] }>('POST', 'targets/extension/import', {
+          uids: uids.trim().split(/\s+/),
+        });
+        setPending(false);
+        if (!result.ok) { setMessage(result.error); return; }
+        setUids('');
+        setMessage(`Đã thêm ${result.data.added.length} đích, bỏ qua ${result.data.skipped.length} UID đã có.`);
+        router.refresh();
+      }}>
+        <label htmlFor="extension-uids">UID, mỗi dòng một số</label>
+        <textarea id="extension-uids" value={uids} required maxLength={6600} onChange={event => setUids(event.target.value)} />
+        <button type="submit" disabled={pending}>Nhập UID</button>
+        <p>Đích mới ở trạng thái tắt. Sau khi ghép đúng profile, bật từng đích để giao việc.</p>
+        {message && <p role="status">{message}</p>}
+      </form>
+    </details>
+  );
+}
+
 export function TargetForm({ target, capabilities }: { target?: TargetT; capabilities: Capabilities }) {
   const id = useId();
   const [form, setForm] = useState(() => targetDraft(target));
   const savedStyle = JSON.stringify(target?.styleProfile ?? {}, null, 2);
   const [style, setStyle] = useState(savedStyle);
   const sub = useSubmit();
-  const real = form.connector === 'fb-web';
+  const extension = form.connector === 'fb-extension';
+  const real = form.connector === 'fb-web' || extension;
   const release = capabilities.releases.find(r => r.active && r.connector === target?.connector);
   const formats = target && release ? capabilities.checks.filter(check => check.target.code === target.code && check.qualified
     && check.connector === target.connector && release.version === check.connectorVersion) : [];
   const dirty = JSON.stringify(form) !== JSON.stringify(targetDraft(target)) || style !== savedStyle;
   return (
     <Panel title={target ? 'Đích ' + target.code : 'Thêm tài khoản đích'}
-      description={real ? 'Bài được đăng qua phiên Facebook đã thiết lập cho tài khoản này.' : 'Dùng để thử luồng bằng tài khoản giả lập.'}
+      description={extension ? 'Bài được gửi tới extension trong profile Chrome đã ghép.' : real ? 'Bài được đăng qua phiên Facebook đã thiết lập cho tài khoản này.' : 'Dùng để thử luồng bằng tài khoản giả lập.'}
       right={target && <Badge s={target.enabled ? 'DONE' : 'CANCELLED'} text={target.enabled ? 'Đang bật' : 'Đã tắt'} />}>
       <form onSubmit={e => {
         e.preventDefault();
@@ -191,9 +258,9 @@ export function TargetForm({ target, capabilities }: { target?: TargetT; capabil
         <div className={styles.fields}>
           {!target && <div className="field"><label htmlFor={id + '-code'}>Mã đích</label><input id={id + '-code'} required pattern="B[0-9]+" placeholder="B6" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>}
           <div className="field"><label htmlFor={id + '-name'}>Tên tài khoản</label><input id={id + '-name'} required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-          <div className="field"><label htmlFor={id + '-connector'}>Cách đăng</label><select id={id + '-connector'} value={form.connector} onChange={e => setForm({ ...form, connector: e.target.value })}><option value="fake">Giả lập</option><option value="fb-web">Facebook</option></select></div>
-          <div className="field"><label htmlFor={id + '-external'}>{real ? 'ID hoặc tên người dùng Facebook' : 'ID tài khoản giả lập'}</label><input id={id + '-external'} autoComplete="off" required value={form.externalId} onChange={e => setForm({ ...form, externalId: e.target.value })} /></div>
-          <div className="field"><label htmlFor={id + '-audience'}>Đối tượng xem</label><select id={id + '-audience'} value={form.audience} onChange={e => setForm({ ...form, audience: e.target.value })}>{Object.entries(audiences).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div>
+          <div className="field"><label htmlFor={id + '-connector'}>Cách đăng</label><select id={id + '-connector'} value={form.connector} onChange={e => setForm({ ...form, connector: e.target.value, audience: e.target.value === 'fb-extension' ? 'ONLY_ME' : form.audience })}><option value="fake">Giả lập</option><option value="fb-web">Facebook</option><option value="fb-extension">Facebook qua extension</option></select></div>
+          <div className="field"><label htmlFor={id + '-external'}>{extension ? 'UID Facebook' : real ? 'ID hoặc tên người dùng Facebook' : 'ID tài khoản giả lập'}</label><input id={id + '-external'} autoComplete="off" required pattern={extension ? '[0-9]{1,32}' : undefined} value={form.externalId} onChange={e => setForm({ ...form, externalId: e.target.value })} /></div>
+          <div className="field"><label htmlFor={id + '-audience'}>Đối tượng xem</label><select id={id + '-audience'} value={form.audience} disabled={extension} onChange={e => setForm({ ...form, audience: e.target.value })}>{Object.entries(audiences).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div>
           <Enabled checked={form.enabled} onChange={enabled => setForm({ ...form, enabled })}>Bật tài khoản đích</Enabled>
         </div>
         <details className={styles.advanced}>
@@ -208,6 +275,7 @@ export function TargetForm({ target, capabilities }: { target?: TargetT; capabil
         <p>{target.profile ? 'Đã gắn hồ sơ trình duyệt.' : 'Cần gắn hồ sơ trình duyệt trên máy worker.'}</p>
         <p>{formats.length ? formats.length + ' định dạng đã đạt kiểm thử với phiên bản hiện hành.' : 'Định dạng đăng theo cấu hình worker. Kiểm thử là tùy chọn.'}</p>
       </div>}
+      {target?.connector === 'fb-extension' && <ExtensionPairing target={target} />}
     </Panel>
   );
 }

@@ -5,6 +5,7 @@ import { createDb } from '@seedingsys/db';
 import { systemClock } from '@seedingsys/domain';
 import { AuthGuard } from './auth';
 import { ConfigController } from './config.controller';
+import { ExtensionController } from './extension.controller';
 import { ImportController } from './import.controller';
 import { LibraryController } from './library.controller';
 import { OpsController } from './ops.controller';
@@ -14,7 +15,7 @@ import { CLOCK, CONFIG, DB, STORE } from './tokens';
 const cfg = loadConfig();
 
 @Module({
-  controllers: [OpsController, ConfigController, ImportController, LibraryController],
+  controllers: [OpsController, ConfigController, ImportController, LibraryController, ExtensionController],
   providers: [
     { provide: CONFIG, useValue: cfg },
     { provide: DB, useValue: createDb(cfg.DATABASE_URL) },

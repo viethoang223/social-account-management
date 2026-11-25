@@ -7,6 +7,8 @@ import { CONFIG, type Role } from './tokens';
 export const ROLES_KEY = 'roles';
 /** Roles allowed on a handler (admin is always allowed). No decorator = any authenticated role. */
 export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+/** Endpoints on this handler authenticate directly against a profile-scoped token. */
+export const ProfileToken = () => SetMetadata('profile-token', true);
 
 export interface Principal {
   role: Role;
@@ -30,6 +32,7 @@ export class AuthGuard implements CanActivate {
   }
 
   canActivate(ctx: ExecutionContext): boolean {
+    if (this.reflector.get<boolean>('profile-token', ctx.getHandler())) return true;
     const req = ctx.switchToHttp().getRequest();
     if (req.path === '/health') return true;
     const h = String(req.headers.authorization ?? '');

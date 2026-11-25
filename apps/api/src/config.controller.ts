@@ -1,6 +1,6 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { z } from 'zod';
-import { Q } from '@seedingsys/contracts';
+import { EXTENSION_CONNECTOR, Q } from '@seedingsys/contracts';
 import { activeKillSwitch, activeLease, audit, enqueue, Prisma, sourceResource, tx, type Db } from '@seedingsys/db';
 import { facebookSourceUrl, isFacebookTimelineReader, type Clock } from '@seedingsys/domain';
 import { Roles, type Principal } from './auth';
@@ -27,12 +27,18 @@ const TargetIn = z.object({
   code: z.string().regex(/^B\d+$/),
   name: z.string().min(1),
   externalId: z.string().min(1),
-  connector: z.enum(['fake', 'fb-web']),
+  connector: z.enum(['fake', 'fb-web', EXTENSION_CONNECTOR]),
   audience: z.enum(['ONLY_ME', 'FRIENDS', 'PUBLIC']).optional(),
   uiLocale: z.string().optional(),
   enabled: z.boolean().optional(),
   styleProfile: z.record(z.unknown()).optional(),
 });
+function validateExtensionTarget(connector: string, uid: string, audience: string) {
+  if (connector === EXTENSION_CONNECTOR && (!/^\d{1,32}$/.test(uid) || audience !== 'ONLY_ME')) {
+    throw new BadRequestException('Đích extension cần UID số và đối tượng Chỉ mình tôi.');
+  }
+}
+
 const MappingIn = z.object({
   sourceId: z.string().uuid(),
   targetId: z.string().uuid(),
@@ -117,12 +123,18 @@ export class ConfigController {
 
   @Get('targets')
   async targets() {
-    return out(await this.db.targetAccount.findMany({ orderBy: { code: 'asc' }, include: { profile: true } }));
+    return out(await this.db.targetAccount.findMany({
+      orderBy: { code: 'asc' }, include: {
+        profile: { include: { workerNode: { select: { lastHeartbeatAt: true } } } },
+        extension: { select: { installationId: true } },
+      },
+    }));
   }
   @Post('targets')
   @Roles('admin')
   async createTarget(@Body() body: unknown, @Actor() a: Principal) {
     const d = parse(TargetIn, body);
+    validateExtensionTarget(d.connector, d.externalId, d.audience ?? 'ONLY_ME');
     const t = await this.db.targetAccount.create({ data: { ...d, styleProfile: (d.styleProfile ?? {}) as object } });
     await audit(this.db, { entityType: 'target', entityId: t.id, action: 'created', actor: a.actor, at: this.clock.now() });
     return out(t);
@@ -131,9 +143,19 @@ export class ConfigController {
   @Roles('admin')
   async updateTarget(@Param('id') id: string, @Body() body: unknown, @Actor() a: Principal) {
     const d = parse(TargetIn.partial(), body);
-    const t = await this.db.targetAccount.update({ where: { id }, data: { ...d, styleProfile: d.styleProfile as object | undefined } });
-    await audit(this.db, { entityType: 'target', entityId: id, action: 'updated', actor: a.actor, data: body, at: this.clock.now() });
-    return out(t);
+    return tx(this.db, async t => {
+      await t.$queryRaw`SELECT id FROM target_accounts WHERE id = ${id}::uuid FOR UPDATE`;
+      const old = await t.targetAccount.findUniqueOrThrow({ where: { id }, include: { extension: true } });
+      const connector = d.connector ?? old.connector;
+      const uid = d.externalId ?? old.externalId;
+      validateExtensionTarget(connector, uid, d.audience ?? old.audience);
+      if (old.extension && (connector !== old.connector || uid !== old.externalId)) {
+        throw new ConflictException('Thu hồi mã profile trước khi đổi UID hoặc cách đăng.');
+      }
+      const target = await t.targetAccount.update({ where: { id }, data: { ...d, styleProfile: d.styleProfile as object | undefined } });
+      await audit(t, { entityType: 'target', entityId: id, action: 'updated', actor: a.actor, data: d, at: this.clock.now() });
+      return out(target);
+    });
   }
 
   @Get('mappings')

@@ -4,6 +4,7 @@ import { loadConfig } from '@seedingsys/config';
 import { ConnectorRegistry } from '@seedingsys/connectors-core';
 import { FakePlatform, FakePublishConnector, FakeReadConnector } from '@seedingsys/connectors-fake';
 import { FbPublicReadConnector, FbWebPublishConnector, FbWebReadConnector, fbWebOptionsFromEnv } from '@seedingsys/connectors-fb-web';
+import { ExtensionPublishConnector } from './runtime/extension';
 import { ManualReadConnector } from '@seedingsys/connectors-manual';
 import { FbGraphReadConnector, fbGraphOptionsFromEnv } from '@seedingsys/connectors-fb-graph';
 import { Q } from '@seedingsys/contracts';
@@ -36,6 +37,7 @@ async function main() {
   registry.addReader(new FbPublicReadConnector(fbOpts));
   registry.addReader(new FbPublicReadConnector(fbOpts, 'fb-session'));
   registry.addReader(new FbWebReadConnector(fbOpts)).addPublisher(new FbWebPublishConnector(fbOpts));
+  registry.addPublisher(new ExtensionPublishConnector(db, clock));
 
   const nodeName = `browser:${cfg.WORKER_NAME}`;
   const node = await db.workerNode.upsert({
