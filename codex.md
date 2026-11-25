@@ -98,3 +98,5 @@ Khi thay mã nguồn, chạy `pnpm typecheck`, `pnpm test` và `pnpm build:web`.
 Chỉ đưa vào báo cáo đường dẫn, commit, URL, mã đích nội bộ, trạng thái và lỗi đã lược bí mật. Giữ `.env`, `.data`, token và thông tin đăng nhập ngoài commit, lịch sử chat và log chia sẻ. Nếu người dùng yêu cầu push, kiểm tra đích là `viethoang223/social-account-management`.
 
 Tài liệu bổ sung: [triển khai và vận hành](docs/DEPLOY.md) · [extension v1.0](docs/EXTENSION-1.0.md).
+
+Tính năng [Phân vai và Radar](docs/PERSONA-RADAR.md) nằm trên `main`, được bổ sung sau tag `v1.0.0`. Nếu người dùng cần tính năng này, dùng commit đã kiểm tra trên `main`, build lại web và áp dụng migration khi khởi động. Tải lại extension tại chỗ lên manifest **1.1.0** để nhận việc quét Radar. Sau khi đăng nhập, kiểm tra có mục **Phân vai & Radar**.

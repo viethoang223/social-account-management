@@ -11,13 +11,16 @@ import type { Clock } from '@seedingsys/domain';
 import { ProfileToken, Roles, type Principal } from './auth';
 import { CLOCK, DB } from './tokens';
 import { Actor, parse } from './util';
+import { RadarImport } from './persona-radar';
+import { claimRadarScan, finishRadarScan } from './radar-dispatch';
 
 const profileUid = z.string().regex(/^\d{1,32}$/);
 const profile = { installationId: z.string().uuid(), uid: profileUid.nullable() };
 const request = z.discriminatedUnion('action', [
-  z.object({ ...profile, action: z.literal('poll') }),
+  z.object({ ...profile, action: z.literal('poll'), radarProtocol: z.literal(1).optional() }),
   z.object({ ...profile, action: z.literal('authorize'), commandId: z.string().uuid() }),
   z.object({ ...profile, action: z.literal('complete'), commandId: z.string().uuid(), outcome: z.enum(['prepared', 'clicked', 'blocked']) }),
+  z.object({ ...profile, action: z.literal('radar-complete'), commandId: z.string().uuid(), report: RadarImport.nullable() }),
 ]);
 
 function tokenHash(token: string) {
@@ -103,6 +106,7 @@ export class ExtensionController {
       });
       const data = { uid: target.externalId, tokenHash: tokenHash(token), installationId: null };
       await t.extensionBinding.upsert({ where: { targetId: id }, create: { targetId: id, ...data }, update: data });
+      await t.extensionRadarScan.updateMany({ where: { targetId: id, state: 'QUEUED' }, data: { state: 'FAILED' } });
       await t.capabilityCheck.upsert({
         where: { targetId_contentType_connector_connectorVersion: {
           targetId: id, contentType: 'TEXT', connector: EXTENSION_CONNECTOR, connectorVersion: EXTENSION_VERSION,
@@ -127,6 +131,7 @@ export class ExtensionController {
       await this.ensureIdle(t, id, now);
       const removed = await t.extensionBinding.deleteMany({ where: { targetId: id } });
       if (removed.count) {
+        await t.extensionRadarScan.updateMany({ where: { targetId: id, state: 'QUEUED' }, data: { state: 'FAILED' } });
         const profile = await t.browserProfile.findUnique({ where: { targetId: id } });
         if (profile?.workerNodeId) {
           await t.workerNode.update({ where: { id: profile.workerNodeId }, data: { lastHeartbeatAt: null } });
@@ -170,12 +175,15 @@ export class ExtensionController {
         if (!binding.installationId) await t.extensionBinding.update({
           where: { targetId: target.id }, data: { installationId: input.installationId },
         });
-        await t.workerNode.update({ where: { id: nodeId }, data: { lastHeartbeatAt: now } });
+        await t.workerNode.update({ where: { id: nodeId }, data: { lastHeartbeatAt: now, capabilities: { radarProtocol: input.radarProtocol ?? 0 } } });
         await t.extensionCommand.deleteMany({ where: { targetId: target.id, expiresAt: { lt: new Date(now.getTime() - 300_000) } } });
         const command = target.enabled ? await t.extensionCommand.findFirst({
           where: { targetId: target.id, expiresAt: { gt: now }, claimedAt: null }, orderBy: { expiresAt: 'asc' },
         }) : null;
-        if (!command || !await commandIsCurrent(t, command, now)) return { code: target.code, state: 'CONNECTED', command: null };
+        if (!command || !await commandIsCurrent(t, command, now)) {
+          const radar = target.enabled && input.radarProtocol === 1 ? await claimRadarScan(t, target.id, input.installationId, now) : null;
+          return { code: target.code, state: 'CONNECTED', command: radar };
+        }
         await t.extensionCommand.update({ where: { id: command.id }, data: { claimedAt: now } });
         return {
           code: target.code, state: 'CONNECTED',
@@ -184,6 +192,12 @@ export class ExtensionController {
         };
       }
       if (!binding.installationId) throw new UnauthorizedException('Profile chưa kết nối.');
+      if (input.action === 'radar-complete') {
+        if (input.uid !== binding.uid) throw new ConflictException('Profile đã đổi UID.');
+        return finishRadarScan(t, {
+          id: input.commandId, installationId: binding.installationId, targetId: target.id, report: target.enabled ? input.report : null, now,
+        });
+      }
       const command = await t.extensionCommand.findFirst({ where: { id: input.commandId, targetId: target.id, claimedAt: { not: null } } });
       if (!command || command.expiresAt <= now) throw new ConflictException('Lệnh đã hết hạn.');
       if (input.action === 'authorize') {

@@ -1,0 +1,36 @@
+.workspace, .form, .context { display: grid; gap: 14px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0; margin-bottom: -1px; }
+.tabs button[aria-pressed="true"] { background: var(--info-bg); color: var(--accent); border-bottom-color: var(--accent); }
+.card { min-width: 0; padding: clamp(14px, 2vw, 23px); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.card h2 { margin: 0 0 12px; }
+.card p { overflow-wrap: anywhere; }
+.form { border: 0; min-width: 0; margin: 0; padding: 0; }
+.form button { justify-self: start; }
+.twoColumns, .personGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.importForm, .binding { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.importForm label, .binding label { margin: 0; flex: 1 1 220px; }
+.importForm input[type="file"] { width: 100%; }
+.importForm p { flex-basis: 100%; margin: 0; }
+.person { border: 1px solid var(--line); border-radius: 9px; padding: 13px; min-width: 0; }
+.person header, .axisTitle { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
+.person h3, .context h3 { margin: 0; }
+.tag { color: var(--info); background: var(--info-bg); padding: 3px 8px; border-radius: 5px; font-size: 12px; }
+.person details, .relation, .history { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+.relation form { padding-top: 10px; }
+.context { margin-bottom: 12px; gap: 7px; }
+.context p, .context dl { margin: 0; }
+.context dl { display: grid; gap: 8px; }
+.context dl > div { display: grid; grid-template-columns: minmax(100px, 145px) minmax(0, 1fr); gap: 8px; }
+.context dt { color: var(--muted); }
+.context dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.sample { border-inline-start: 3px solid var(--accent); background: var(--info-bg); padding: 8px 12px; font-weight: 600; }
+.radarGroup { min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 13px; }
+.radarGroup h3 { margin: 0; }
+.radarChart { display: block; width: min(100%, 320px); height: auto; margin: 0 auto; aspect-ratio: 1; }
+.axes { margin: 0; padding-left: 24px; }
+.axes > li { padding: 8px 0; border-top: 1px solid var(--line); }
+.axes p { margin: 4px 0; }
+.scanList { list-style: none; margin: 0; padding: 0; }
+.scanList li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .twoColumns, .personGrid { grid-template-columns: 1fr; } }

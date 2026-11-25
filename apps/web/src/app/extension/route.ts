@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     return Response.json({ message: 'Mã profile không hợp lệ.' }, { status: 401 });
   }
   const body = await request.text();
-  if (body.length > 2048) return Response.json({ message: 'Yêu cầu quá lớn.' }, { status: 413 });
+  if (Buffer.byteLength(body) > 64_000) return Response.json({ message: 'Yêu cầu quá lớn.' }, { status: 413 });
   try {
     const upstream = await fetch(`${API_URL}/api/extension`, {
       method: 'POST', headers: { Authorization: authorization, 'Content-Type': 'application/json' },

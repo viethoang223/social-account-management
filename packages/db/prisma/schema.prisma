@@ -204,6 +204,7 @@ model TargetAccount {
   profile      BrowserProfile?
   extension    ExtensionBinding?
   extensionCommands ExtensionCommand[]
+  radarScans   ExtensionRadarScan[]
   variants     ContentVariant[]
   slots        PublicationSlot[]
   publications Publication[]
@@ -290,6 +291,50 @@ model ExtensionCommand {
   @@index([targetId, expiresAt])
   @@unique([sessionId, action])
   @@map("extension_commands")
+}
+
+model PersonaDirectory {
+  id       String @id
+  registry Json
+
+  @@map("persona_directories")
+}
+
+model CustomerRadar {
+  id         String   @id @default(uuid()) @db.Uuid
+  url        String   @unique
+  name       String
+  analyzedAt DateTime @map("analyzed_at") @db.Timestamptz(3)
+  report     Json
+
+  @@map("customer_radars")
+}
+
+model ExtensionRadarScan {
+  id             String   @id @default(uuid()) @db.Uuid
+  targetId       String   @map("target_id") @db.Uuid
+  installationId String  @map("installation_id") @db.Uuid
+  url            String
+  state          String
+  leaseToken     BigInt?  @map("lease_token")
+  radarId        String?  @map("radar_id") @db.Uuid
+  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(3)
+  target         TargetAccount @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, state, expiresAt])
+  @@map("extension_radar_scans")
+}
+
+model PersonaApproval {
+  id          String   @id @default(uuid()) @db.Uuid
+  fingerprint String   @unique
+  context     Json
+  approvedBy  String   @map("approved_by")
+  approvedAt  DateTime @map("approved_at") @db.Timestamptz(3)
+
+  @@index([approvedAt])
+  @@map("persona_approvals")
 }
 
 model ConnectorRelease {

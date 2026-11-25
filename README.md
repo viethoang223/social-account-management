@@ -2,6 +2,8 @@
 
 **Bản 1.0 · [Kết nối dàn UID qua extension Chrome](docs/EXTENSION-1.0.md).**
 
+[Phân vai và Radar trên nhánh main](docs/PERSONA-RADAR.md)
+
 Hệ thống điều phối A → B theo đặc tả *SeedingSys Pilot A1–A5 → B1–B5 v1.0*: thu thập nguồn mỗi 5 phút, biên tập bằng LLM, cấp tối đa 1 lượt đăng mỗi giờ cho mỗi tài khoản đích, xác minh và đối soát kết quả. Thiết kế để lên 50 nguồn/đích bằng cách thêm cấu hình và worker, không đổi schema.
 
 ## Trạng thái triển khai

@@ -1,4 +1,5 @@
 import { composer } from './composer.js';
+import { scanRadar } from './radar-scan.js';
 
 const facebook = 'https://www.facebook.com';
 const pollAlarm = 'seedingsys-poll';
@@ -86,11 +87,17 @@ async function poll() {
   if (!config) return { state: 'DISCONNECTED' };
   const uid = await observedUid();
   const started = Date.now();
-  const data = await api(config, { action: 'poll' });
+  const data = await api(config, { action: 'poll', radarProtocol: 1 });
   if (data.command) {
     const command = data.command;
-    const outcome = await execute(config, command, uid, started + command.lifetimeMs).catch(() => 'blocked');
-    await api(config, { action: 'complete', commandId: command.id, outcome });
+    const deadline = started + command.lifetimeMs;
+    if (command.action === 'radar-scan') {
+      const report = await scanRadar(command.url, deadline, async () => !!uid && await observedUid() === uid).catch(() => null);
+      await api(config, { action: 'radar-complete', commandId: command.id, report });
+    } else {
+      const outcome = await execute(config, command, uid, deadline).catch(() => 'blocked');
+      await api(config, { action: 'complete', commandId: command.id, outcome });
+    }
   }
   return { state: data.state, code: data.code };
 }

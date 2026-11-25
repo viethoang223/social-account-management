@@ -1,0 +1,162 @@
+{
+  "schema": "desk.customer-profile/2",
+  "id": "f52f3da0-e18f-44bd-bc79-618df661aeb8",
+  "url": "https://www.facebook.com/profile.php?id=10009901",
+  "name": "Khách hàng mẫu",
+  "analyzedAt": "2026-11-23T03:00:00.000Z",
+  "postsRead": 1,
+  "facts": [
+    {
+      "label": "Người theo dõi",
+      "value": "24",
+      "source": "Đầu trang"
+    }
+  ],
+  "demographic": {
+    "age": {
+      "score": null,
+      "confidence": "không có",
+      "note": "Trang không công khai thông tin này."
+    },
+    "income": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Trang không công khai công việc."
+    },
+    "class": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai để đánh giá lối sống."
+    },
+    "education": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Trang không công khai thông tin này."
+    },
+    "urban": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Trang không công khai thông tin này."
+    },
+    "family": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Trang không công khai thông tin này."
+    }
+  },
+  "personality": {
+    "naive": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "knowledgeable": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "assertive": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "goofy": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "extravert": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "expressive": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    },
+    "driven": {
+      "score": 74,
+      "confidence": "thấp",
+      "evidence": [
+        {
+          "text": "Mục tiêu năm nay: học kỹ năng mới và ôn thi chứng chỉ",
+          "why": "học, thi, chứng chỉ, mục tiêu"
+        }
+      ],
+      "note": ""
+    },
+    "family_care": {
+      "score": null,
+      "confidence": "không có",
+      "evidence": [],
+      "note": "Chưa đủ bài viết công khai (cần ít nhất 1 bài có dấu hiệu, hoặc 10 bài để kết luận \"thấp\")."
+    }
+  },
+  "buying": {
+    "axes": [
+      {
+        "id": "legacy_only",
+        "label": "Dữ liệu cũ loại bỏ",
+        "score": 88,
+        "confidence": "",
+        "definition": "",
+        "evidence": []
+      }
+    ],
+    "source": "legacy-fixture",
+    "at": "2026-11-25T16:49:50.685Z"
+  },
+  "manual": {
+    "age": {
+      "score": 0,
+      "at": "2026-11-23T03:00:00.000Z"
+    }
+  },
+  "notes": "",
+  "persona": {
+    "complete": true,
+    "missing": [],
+    "groups": [
+      {
+        "group": "Tuổi",
+        "value": "Sinh viên"
+      },
+      {
+        "group": "Thu nhập",
+        "value": null
+      },
+      {
+        "group": "Đẳng cấp",
+        "value": null
+      },
+      {
+        "group": "Cá tính",
+        "value": null,
+        "note": ""
+      }
+    ],
+    "demographic": [
+      "Tuổi: Sinh viên"
+    ],
+    "strongTraits": [
+      "Cầu tiến"
+    ],
+    "weakTraits": [],
+    "buyingHigh": [
+      "Dữ liệu cũ loại bỏ (88)"
+    ],
+    "buyingLow": []
+  }
+}

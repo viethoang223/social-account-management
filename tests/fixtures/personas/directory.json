@@ -1,0 +1,71 @@
+{
+  "schema": "desk.personas/1",
+  "registryId": "compatibility-fixture",
+  "revision": 4,
+  "profiles": [
+    {
+      "id": "author",
+      "alias": "Người phụ trách",
+      "name": "Tài khoản mẫu 1",
+      "uid": "10001901",
+      "role": "author",
+      "gender": "unspecified",
+      "enabled": true,
+      "status": "",
+      "personality": "Rõ ràng",
+      "tone": "Giải thích theo từng bước",
+      "self": "",
+      "other": "",
+      "bio": "Tài khoản thử có vai phụ trách.",
+      "memory": "Ghi chú dài hạn mẫu",
+      "rules": "Giữ cách xưng hô đã duyệt",
+      "concept": {
+        "ageGroup": [],
+        "incomeGroup": [],
+        "socialClass": [],
+        "traitGroup": []
+      }
+    },
+    {
+      "id": "advisor",
+      "alias": "Người hỗ trợ",
+      "name": "Tài khoản mẫu 2",
+      "uid": "10001902",
+      "role": "junior_female",
+      "gender": "female",
+      "enabled": true,
+      "status": "",
+      "personality": "Điềm tĩnh",
+      "tone": "",
+      "self": "",
+      "other": "",
+      "bio": "Tài khoản thử phụ trách hỗ trợ.",
+      "memory": "",
+      "rules": "",
+      "concept": {
+        "ageGroup": [],
+        "incomeGroup": [],
+        "socialClass": [],
+        "traitGroup": []
+      }
+    }
+  ],
+  "relations": [
+    {
+      "from": "author",
+      "to": "advisor",
+      "role": "senior_male",
+      "self": "anh",
+      "other": "em",
+      "notes": "Chiều đi"
+    },
+    {
+      "from": "advisor",
+      "to": "author",
+      "role": "junior_female",
+      "self": "em",
+      "other": "anh",
+      "notes": "Chiều về"
+    }
+  ]
+}
