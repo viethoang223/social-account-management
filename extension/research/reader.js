@@ -2,7 +2,7 @@
 export async function readResearch(mode, requested, limit, deadline) {
   const origin = 'https://www.facebook.com';
   const article = 'article,[role="article"]';
-  const message = '[data-ad-preview="message"],[data-ad-comet-preview="message"]';
+  const message = '[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-ad-rendering-role="story_message"],[data-testid="post_message"]';
   const heading = 'header a[href],h2 a[href],h3 a[href],h4 a[href],[role="heading"] a[href]';
   const control = 'button,[role="button"]';
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -46,19 +46,22 @@ export async function readResearch(mode, requested, limit, deadline) {
     return null;
   };
   const expandText = /^(?:xem thêm|see more)$/i;
+  const messageBlocks = scope => {
+    const candidates = own(scope, message).filter(node => text(node));
+    const innermost = candidates.filter(node => !candidates.some(other => other !== node && node.contains(other)));
+    return [...new Map(innermost.map(node => [text(node), node])).values()];
+  };
   const caption = scope => {
-    const blocks = own(scope, message);
+    const blocks = messageBlocks(scope);
     const body = blocks.length === 1 ? text(blocks[0]) : '';
     return { body: body.replace(/\s+(?:xem thêm|see more)$/i, ''),
       captionPartial: blocks.length > 1 || /(?:…|\.{3}|xem thêm|see more)$/i.test(body),
     };
   };
-  const path = new URL(requested).pathname.replace(/\/+$/, '');
-  const reel = mode === 'post' && path.startsWith('/reel/');
-  const reelView = reel ? globalThis.__seedingReelComments : null;
-  const main = document.querySelector('main,[role="main"]');
-  if (!allowed() || (reel ? reelView?.path !== path || !reelView.panel.isConnected : !main)) return null;
+  if (!allowed()) return null;
   if (mode === 'profile') {
+    const main = document.querySelector('main,[role="main"]');
+    if (!main) return null;
     const rows = new Map();
     let still = 0;
     for (let round = 0; round < 27 && allowed() && rows.size < limit && still < 4; round++) {
@@ -82,28 +85,64 @@ export async function readResearch(mode, requested, limit, deadline) {
     return allowed() ? { url: location.href, value: { rows: [...rows.values()], ended: still === 4 } } : null;
   }
   const targetId = post(requested)?.id;
-  if (!targetId || post(location.href)?.id !== targetId) return null;
+  const unable = issue => ({ url: location.href, issue });
+  if (!targetId) return null;
+  const destination = new URL(requested);
+  const path = destination.pathname.replace(/\/+$/, '');
+  const reel = path.startsWith('/reel/');
+  const reelView = reel ? globalThis.__seedingReelComments : null;
+  const onTarget = () => allowed() && post(location.href)?.id === targetId
+    && (!reel || (location.pathname.replace(/\/+$/, '') === path && reelView?.path === path
+      && reelView.panel.isConnected && visible(reelView.panel)));
+  if (!onTarget()) return reel ? unable('Khung bình luận không còn thuộc Reel đang đọc.') : null;
+  const ownerId = destination.searchParams.get('id');
+  const ownerHref = /^\d+$/.test(ownerId ?? '') ? origin + '/profile.php?id=' + ownerId : null;
+  const ownerLink = scope => ownerHref && own(scope, 'a[href]').find(anchor =>
+    !isComment(anchor.closest(article)) && person(anchor.href) === ownerHref && text(anchor));
+  const commentPostId = url => {
+    url.searchParams.delete('comment_id');
+    url.searchParams.delete('reply_comment_id');
+    return post(url.href)?.id;
+  };
+  const hasTargetComment = scope => all(scope, 'a[href*="comment_id="]').some(anchor => {
+    const url = link(anchor.href);
+    return url && commentPostId(url) === targetId;
+  });
   const single = items => items.length === 1 ? items[0] : null;
-  const initial = reelView?.panel ?? (single(all(document, '[role="dialog"]').filter(dialog => own(dialog, message).length > 0)) ?? main);
+  const openUntil = Math.min(deadline, Date.now() + 8000);
+  let main, initial = reelView?.panel;
+  while (!initial && Date.now() < openUntil) {
+    if (!onTarget()) return null;
+    main = document.querySelector('main,[role="main"]');
+    const dialogs = all(document, '[role="dialog"],dialog').filter(dialog =>
+      own(dialog, message).length > 0 || hasTargetComment(dialog) || ownerLink(dialog));
+    const innermost = dialogs.filter(dialog => !dialogs.some(other => other !== dialog && dialog.contains(other)));
+    initial = single(innermost) ?? main;
+    if (!initial) await pause(200);
+  }
+  if (!initial) return unable('Chưa thấy vùng bài viết trên trang đã tải.');
   const cards = reel ? [] : all(initial, article).filter(card => !isComment(card) && own(card, message).length);
   const matchesPost = card => own(card, 'a[href]').some(anchor => anchor.closest(article) === card && post(anchor.href)?.id === targetId);
   const primary = single(cards.filter(matchesPost)) ?? single(cards);
   const content = reelView?.content ?? primary ?? initial;
-  if (!reel && !primary && own(content, message).length > 1) return null;
-  const bodyNode = () => single(own(content, message));
+  if (!primary && initial === main && messageBlocks(content).length > 1) {
+    return unable('Trang có nhiều vùng nội dung bài chồng nhau.');
+  }
+  const bodyNode = () => single(messageBlocks(content));
   const moreCaption = bodyNode() && single(named(bodyNode(), control, expandText));
-  if (moreCaption && allowed()) {
+  if (moreCaption && onTarget()) {
     moreCaption.click();
     await pause(350);
   }
   const replyLoader = /^(?:(?:xem|hiển thị|view|see|show) (?:thêm |more |previous |all |tất cả )?(?:\d+ )?(?:bình luận|phản hồi|câu trả lời|replies|comments)(?: khác| trước| nữa| more)?|\d+ (?:phản hồi|câu trả lời|replies))$/i;
   const orderMenu = single(named(initial, control, /^(?:phù hợp nhất|most relevant|mới nhất|newest)$/i));
-  if (orderMenu && allowed()) {
+  if (orderMenu && onTarget()) {
     orderMenu.click();
     await pause(250);
+    if (!onTarget()) return null;
     const showAll = single(named(document, '[role="menuitem"],[role="menuitemradio"],[role="option"]', /^(?:tất cả bình luận|all comments)$/i));
     if (showAll) showAll.click();
-    else if (allowed()) orderMenu.click();
+    else orderMenu.click();
   }
   const readComments = () => {
     const nodes = all(initial, article).filter(isComment);
@@ -111,16 +150,15 @@ export async function readResearch(mode, requested, limit, deadline) {
     let roots = 0, truncated = false;
     for (const card of nodes) {
       const links = own(card, 'a[href]');
-      const direct = links.map(anchor => link(anchor.href)).filter(Boolean).flatMap(url => {
+      const references = links.map(anchor => link(anchor.href)).filter(Boolean).flatMap(url => {
         const root = url.searchParams.get('comment_id');
         const reply = url.searchParams.get('reply_comment_id');
         if (!root && !reply) return [];
-        url.searchParams.delete('comment_id');
-        url.searchParams.delete('reply_comment_id');
-        const linkedPost = post(url.href);
-        return linkedPost ? [{ root, reply, postId: linkedPost.id }] : [];
-      }).at(0);
-      if (direct && direct.postId !== targetId) continue;
+        const postId = commentPostId(url);
+        return postId ? [{ root, reply, postId }] : [];
+      });
+      const direct = references.find(ids => ids.postId === targetId);
+      if (!direct && references.length) continue;
       if (!direct && !primary?.contains(card) && initial === main) { truncated = true; continue; }
       const name = links.find(anchor => person(anchor.href) && text(anchor));
       const body = own(card, '[dir="auto"]').filter(el => el.closest(article) === card
@@ -139,31 +177,34 @@ export async function readResearch(mode, requested, limit, deadline) {
       if (externalId) seen.add(externalId);
       depthByCard.set(card, { externalId, depth });
       const parentExternalId = nestedParent ? nestedParent.externalId : reply ? direct?.root : null;
-      result.push({ externalId, parentExternalId, originalName: text(name), text: body, depth });
+      result.push({ externalId, parentExternalId, rootExternalId: direct?.root ?? null,
+        authorUrl: name ? person(name.href) : null, originalName: text(name), text: body, depth });
     }
     return { result, roots, truncated };
   };
   let collected = readComments(), quiet = 0, loaders = [];
-  for (let round = 0; round < 18 && allowed() && quiet < 3; round++) {
+  for (let round = 0; round < 18 && onTarget() && quiet < 3; round++) {
     loaders = named(initial, control, replyLoader).filter(button =>
       collected.roots < limit || !title(button).some(name => /(?:bình luận|comments)/i.test(name)));
     if (loaders.length) loaders.slice(0, 4).forEach(button => button.click());
     else if (collected.roots >= limit) break;
-    else (all(initial, article).filter(isComment).at(-1) ?? content).scrollIntoView({ block: 'end' });
+    else (all(initial, article).filter(isComment).at(-1) ?? (reel ? initial : content)).scrollIntoView({ block: 'end' });
     await pause(380);
     const next = readComments();
     quiet = next.result.length === collected.result.length ? quiet + 1 : 0;
     collected = next;
   }
-  if (!allowed() || post(location.href)?.id !== targetId) return null;
-  const author = own(content, heading).find(anchor => person(anchor.href) && text(anchor));
+  if (!onTarget()) return null;
+  const author = ownerLink(content) ?? own(content, heading).find(anchor => person(anchor.href) && text(anchor));
   const video = own(content, 'video')[0];
   const sourceKind = reel ? 'reel' : /\/(?:watch|videos)(?:\/|$)/.test(path) || video ? 'video' : 'post';
   const images = own(content, 'img').filter(img => img.naturalWidth >= 200
     && (img.closest('a[href*="fbid="]') || img.closest('[data-ad-preview="media"],[data-ad-comet-preview="media"]'))).map(img => img.currentSrc || img.src);
   const gallery = own(content, 'a[href*="set=pcb"]').at(0)?.href;
   const preview = caption(content);
-  if (!preview.body && !collected.result.length && !images.length && !video && sourceKind === 'post' && !primary) return null;
+  if (!preview.body && !author && !collected.result.length && !images.length && !video && sourceKind === 'post' && !primary) {
+    return unable('Vùng bài mở được nhưng chưa đọc được tác giả, nội dung hoặc bình luận.');
+  }
   const locationLink = own(content, 'a[href*="/places/"],a[href*="/checkin/"]').find(anchor => text(anchor));
   return { url: location.href, value: { ...preview, author: text(author), authorURL: author ? person(author.href) : null,
     location: text(locationLink), images, gallery, more: Boolean(gallery), video: Boolean(video || sourceKind !== 'post'),

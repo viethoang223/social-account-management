@@ -51,36 +51,78 @@ function reportFor(kind, value, limit) {
     sourceKind: value.sourceKind, comments, partial };
 }
 
-export async function scanResearch(command, deadline, sameUid) {
+async function readOnFacebook(command, deadline, sameUid, fail, fresh = false) {
   const { url, kind, limit } = command;
   const identity = facebookIdentity(url);
-  if (!identity || identity.startsWith('post:') !== (kind === 'RESEARCH_POST') || !await sameUid()) return null;
-  const tab = await chrome.tabs.create({ url, active: false });
-  if (tab.id === undefined) return null;
+  if (!identity || identity.startsWith('post:') !== (kind === 'RESEARCH_POST') || Date.now() >= deadline || !await sameUid()) {
+    return fail('URL, UID hoặc thời hạn của lượt đọc không khớp.');
+  }
+  let tab, openedTab = false, stage = 'Mở tab Facebook';
   try {
+    if (!fresh) {
+      const openTabs = await chrome.tabs.query({ url: 'https://www.facebook.com/*' });
+      tab = openTabs.find(item => item.active && item.status === 'complete' && facebookIdentity(item.url) === identity);
+    }
+    if (!tab) {
+      tab = await chrome.tabs.create({ url, active: kind === 'RESEARCH_POST' });
+      openedTab = true;
+    }
+    if (tab.id === undefined) return fail('Chrome không cung cấp tab cho lượt đọc.');
     const until = Math.min(deadline, Date.now() + 15_000);
     for (;;) {
       const current = await chrome.tabs.get(tab.id);
       if (current.status === 'complete' && !current.pendingUrl && facebookIdentity(current.url) === identity) break;
-      if (Date.now() >= until) return null;
+      if (Date.now() >= until) {
+        return fail(facebookIdentity(current.url) === identity
+          ? 'Tab mở đúng bài nhưng tải quá thời gian.'
+          : 'Tab Facebook không mở được đúng link đã giao.');
+      }
       await delay(250);
     }
-    if (!await sameUid()) return null;
+    if (!await sameUid()) return fail('UID đổi trước khi đọc.');
     const target = { tabId: tab.id };
     if (new URL(url).pathname.startsWith('/reel/')) {
+      stage = 'Mở khung bình luận của Reel';
       const [opened] = await chrome.scripting.executeScript({ target, func: openReelComments, args: [url, deadline] });
-      if (!opened?.result || !opened.documentId || !await sameUid()) return null;
+      if (!opened?.result || !opened.documentId) return fail('Chưa mở được khung bình luận của đúng Reel.');
+      if (!await sameUid()) return fail('UID đổi sau khi mở khung bình luận của Reel.');
       target.documentIds = [opened.documentId];
     }
+    stage = 'Đọc nội dung trang';
     const [read] = await chrome.scripting.executeScript({
       target, func: readResearch,
       args: [kind === 'RESEARCH_POST' ? 'post' : 'profile', url, limit, deadline],
     });
-    if (Date.now() >= deadline || facebookIdentity(read?.result?.url) !== identity || !await sameUid()) return null;
-    const report = reportFor(kind, read.result.value, limit);
-    return report && byteLength(report) <= 62_000 ? { ...report, url } : null;
+    if (!read?.result || read.result.issue) return fail(read?.result?.issue ?? 'Trình đọc chưa nhận diện được nội dung trên trang đã mở.');
+    if (Date.now() >= deadline || facebookIdentity(read.result.url) !== identity || !await sameUid()) {
+      return fail('Phiên đọc hoặc URL thay đổi trong lúc xử lý.');
+    }
+    return read.result.value;
+  } catch {
+    return fail(stage + ' không thành công.');
   } finally {
-    const current = await chrome.tabs.get(tab.id).catch(() => null);
-    if (facebookIdentity(current?.url) === identity) await chrome.tabs.remove(tab.id).catch(() => {});
+    if (openedTab && tab?.id !== undefined) {
+      const current = await chrome.tabs.get(tab.id).catch(() => null);
+      if (facebookIdentity(current?.url) === identity) await chrome.tabs.remove(tab.id).catch(() => {});
+    }
   }
+}
+
+export async function scanResearch(command, deadline, sameUid) {
+  await chrome.storage.session.remove('lastResearchIssue');
+  const fail = async reason => {
+    await chrome.storage.session.set({ lastResearchIssue: reason });
+    return null;
+  };
+  const value = await readOnFacebook(command, deadline, sameUid, fail);
+  if (!value) return null;
+  const report = reportFor(command.kind, value, command.limit);
+  return report && byteLength(report) <= 62_000 ? { ...report, url: command.url } : fail('Kết quả rỗng hoặc vượt giới hạn.');
+}
+
+export function readCommentThread(postUrl, deadline, sameUid) {
+  const url = new URL(postUrl);
+  url.searchParams.delete('comment_id');
+  url.searchParams.delete('reply_comment_id');
+  return readOnFacebook({ url: url.href, kind: 'RESEARCH_POST', limit: 20 }, deadline, sameUid, () => null, true);
 }

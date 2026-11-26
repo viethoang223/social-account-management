@@ -38,6 +38,7 @@ export interface Destination {
 }
 
 export interface CommentReplay {
+  id: string;
   destinationId: string;
   authorTargetId: string | null;
   personaApprovalId: string | null;
@@ -66,6 +67,7 @@ export interface PostDetail {
   scan: { status: 'QUEUED' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'FAILED'; readCount: number; expectedCount: number | null; detail: string | null } | null;
   canScan: boolean;
   comments: SourceComment[];
+  composedComments: CommentReplay[];
   authors: Array<Profile & { connector: string }>;
   approvedRoles: Array<{ id: string; speakerId: string; listenerId: string; label: string }>;
   destinations: Destination[];

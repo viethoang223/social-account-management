@@ -7,4 +7,6 @@ export interface ExtensionCommentContext {
   sendVersion: number;
   postUrl: string;
   parentId?: string;
+  composed?: true;
+  knownCommentIds?: string[];
 }

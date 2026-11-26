@@ -32,7 +32,7 @@ export class ExtensionPublishConnector implements PublishConnector {
     let draftCaption: string | undefined;
     const send = async (action: 'prepare' | 'commit' | 'comment-prepare' | 'comment-commit', caption: string, comment?: ExtensionCommentContext) => {
       const commits = action === 'commit' || action === 'comment-commit';
-      const timeoutMs = commits ? 50_000 : 75_000;
+      const timeoutMs = action === 'comment-commit' ? 105_000 : commits ? 50_000 : 75_000;
       const command = await this.db.extensionCommand.create({
         data: { targetId: target.id, publicationId: operation.publicationId, fencingToken: operation.fencingToken, sessionId,
           action, caption, ...(comment && { comment: json(comment) }), expiresAt: new Date(this.clock.now().getTime() + timeoutMs) },
@@ -42,7 +42,7 @@ export class ExtensionPublishConnector implements PublishConnector {
       try {
         while (Date.now() < deadline) {
           const current = await this.db.extensionCommand.findUnique({ where: { id: command.id }, select: { result: true } });
-          const result = current?.result as { outcome?: string; receipt?: { externalId: string; permalink: string } } | null | undefined;
+          const result = current?.result as { outcome?: string; issue?: string; receipt?: { externalId: string; permalink: string } } | null | undefined;
           if (result?.outcome) return result;
           await delay(350);
         }
@@ -60,8 +60,9 @@ export class ExtensionPublishConnector implements PublishConnector {
       postComment: async ({ post, parentId, text }, beforeSubmit) => {
         if (!operation.comment) throw new ConnectorError('UNSUPPORTED', 'Thiếu lượt bình luận đã duyệt.');
         const comment = { ...operation.comment, postUrl: post.href, parentId };
-        if ((await send('comment-prepare', text, comment)).outcome !== 'prepared') {
-          throw new ConnectorError('UI_UNEXPECTED', 'Extension không xác nhận được đúng ô bình luận.');
+        const prepared = await send('comment-prepare', text, comment);
+        if (prepared.outcome !== 'prepared') {
+          throw new ConnectorError('UI_UNEXPECTED', prepared.issue ?? 'Extension không xác nhận được đúng ô bình luận.');
         }
         await beforeSubmit();
         const result = await send('comment-commit', text, comment);

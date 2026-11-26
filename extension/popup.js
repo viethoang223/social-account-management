@@ -15,8 +15,9 @@ async function check() {
       LOGGED_OUT: 'Đăng nhập Facebook trong profile này.',
       DISCONNECTED: 'Nhập địa chỉ và mã profile để kết nối.',
     })[result.state] ?? result.message ?? 'Không kết nối được.';
-    const { commentPrepareError } = await chrome.storage.session.get('commentPrepareError');
-    if (commentPrepareError) status.textContent += ' ' + commentPrepareError;
+    const { lastResearchIssue, lastCommentIssue } = await chrome.storage.session.get(['lastResearchIssue', 'lastCommentIssue']);
+    if (result.state === 'CONNECTED' && lastResearchIssue) status.textContent += ' · Post Research: ' + lastResearchIssue;
+    if (result.state === 'CONNECTED' && lastCommentIssue) status.textContent += ' · Bình luận: ' + lastCommentIssue;
   } catch (error) {
     status.textContent = error.message;
   }

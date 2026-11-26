@@ -395,6 +395,7 @@ model SourcePost {
   revisions    SourcePostRevision[]
   publications Publication[]
   comments     SourceComment[]
+  composedComments PublicationComment[]
   commentScans CommentScan[]
   syncItems ProfileSyncItem[]
   aliases   SourcePostAlias[]
@@ -660,7 +661,8 @@ model Publication {
 model PublicationComment {
   id              String              @id @default(uuid()) @db.Uuid
   destinationId   String              @map("destination_id") @db.Uuid
-  sourceCommentId String              @map("source_comment_id") @db.Uuid
+  sourceCommentId String?             @map("source_comment_id") @db.Uuid
+  sourcePostId    String?             @map("source_post_id") @db.Uuid
   authorTargetId  String?             @map("author_target_id") @db.Uuid
   personaApprovalId String?            @map("persona_approval_id") @db.Uuid
   text            String
@@ -672,12 +674,14 @@ model PublicationComment {
   updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   destination TargetAccount  @relation("CommentDestination", fields: [destinationId], references: [id])
-  source      SourceComment @relation(fields: [sourceCommentId], references: [id])
+  source      SourceComment? @relation(fields: [sourceCommentId], references: [id], onDelete: Restrict)
+  sourcePost  SourcePost? @relation(fields: [sourcePostId], references: [id], onDelete: Restrict)
   author      TargetAccount? @relation("CommentAuthor", fields: [authorTargetId], references: [id])
   personaApproval PersonaApproval? @relation(fields: [personaApprovalId], references: [id])
   @@unique([destinationId, sourceCommentId])
   @@unique([destinationId, externalId])
   @@index([destinationId, status])
+  @@index([sourcePostId, destinationId])
   @@map("publication_comments")
 }
 

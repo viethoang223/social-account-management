@@ -18,10 +18,12 @@ import { claimResearch, finishResearch } from './research-dispatch';
 const profileUid = z.string().regex(/^\d{1,32}$/);
 const profile = { installationId: z.string().uuid(), uid: profileUid.nullable() };
 const request = z.discriminatedUnion('action', [
-  z.object({ ...profile, action: z.literal('poll'), radarProtocol: z.literal(1).optional(), commentProtocol: z.literal(1).optional(),
+  z.object({ ...profile, action: z.literal('poll'), radarProtocol: z.literal(1).optional(), commentProtocol: z.union([z.literal(1), z.literal(2)]).optional(),
+    extensionVersion: z.string().regex(/^\d{1,4}(?:\.\d{1,4}){0,3}$/).optional(),
     researchProtocol: z.literal(1).optional() }),
   z.object({ ...profile, action: z.literal('authorize'), commandId: z.string().uuid() }),
   z.object({ ...profile, action: z.literal('complete'), commandId: z.string().uuid(), outcome: z.enum(['prepared', 'clicked', 'blocked']),
+    issue: z.string().trim().max(240).optional(), verification: z.literal('reopened-post').optional(),
     receipt: z.object({ externalId: z.string().regex(/^[\w:-]{1,150}$/), permalink: z.string().max(2000).url() }).optional() }),
   z.object({ ...profile, action: z.literal('radar-complete'), commandId: z.string().uuid(), report: RadarImport.nullable() }),
   z.object({ ...profile, action: z.literal('research-complete'), commandId: z.string().uuid(), report: ResearchReportSchema.nullable() }),
@@ -58,11 +60,13 @@ async function commentCommandIsCurrent(t: Tx, command: ExtensionCommand, now: Da
   const replay = await t.publicationComment.findFirst({
     where: { id: data.replayId, sendVersion: data.sendVersion, authorTargetId: command.targetId,
       status: command.action === 'comment-commit' ? 'SENDING' : 'QUEUED', text: command.caption },
-    include: { source: { include: { post: true } } },
+    include: { source: { include: { post: true } }, sourcePost: true },
   });
-  if (!replay?.personaApprovalId || replay.source.post.archivedAt) return false;
+  const post = replay?.source?.post ?? replay?.sourcePost;
+  if (!replay?.personaApprovalId || !post || post.archivedAt) return false;
+  const parentExternalId = replay.source?.parentExternalId ?? null;
   const pub = await t.publication.findFirst({
-    where: { id: command.publicationId, targetId: replay.destinationId, sourcePostId: replay.source.sourcePostId, status: { in: [...SUCCESS] },
+    where: { id: command.publicationId, targetId: replay.destinationId, sourcePostId: post.id, status: { in: [...SUCCESS] },
       target: { enabled: true } }, select: { permalink: true, commentAccessConfirmedAt: true,
       target: { select: { audience: true } }, variant: { select: { snapshot: true } } },
   });
@@ -70,13 +74,13 @@ async function commentCommandIsCurrent(t: Tx, command: ExtensionCommand, now: Da
   if (!pub || !requested || facebookPostId(requested) !== facebookPostLink(pub.permalink)?.id) return false;
   const audience = (pub.variant.snapshot as unknown as PublishSnapshot | null)?.audience ?? pub.target.audience;
   if (audience === 'ONLY_ME' && replay.destinationId !== command.targetId && !pub.commentAccessConfirmedAt) return false;
-  const listener = await commentListener(t, replay.destinationId, replay.source);
+  const listener = await commentListener(t, replay.destinationId, { sourcePostId: post.id, parentExternalId });
   const author = listener && await personaCommentAuthor(t, replay.personaApprovalId, listener);
   if (!author || author.id !== command.targetId) return false;
-  if (replay.source.parentExternalId) {
+  if (parentExternalId) {
     const parent = await t.publicationComment.findFirst({
       where: { destinationId: replay.destinationId, status: 'POSTED',
-        source: { sourcePostId: replay.source.sourcePostId, externalId: replay.source.parentExternalId } },
+        source: { sourcePostId: post.id, externalId: parentExternalId } },
       select: { permalink: true },
     });
     const parentUrl = facebookUrl(parent?.permalink);
@@ -86,7 +90,7 @@ async function commentCommandIsCurrent(t: Tx, command: ExtensionCommand, now: Da
       || (reply ?? null) !== requested.searchParams.get('reply_comment_id')) return false;
   } else if (data.parentId || requested.searchParams.has('comment_id') || requested.searchParams.has('reply_comment_id')) return false;
   for (const targetId of new Set([command.targetId, replay.destinationId])) {
-    if (await activeKillSwitch(t, { sourceId: replay.source.post.sourceId, targetId, connector: EXTENSION_CONNECTOR })) return false;
+    if (await activeKillSwitch(t, { sourceId: post.sourceId, targetId, connector: EXTENSION_CONNECTOR })) return false;
   }
   return assertLeaseHeld(t, { resource: accountResource(command.targetId), token: command.fencingToken }, now, 5_000);
 }
@@ -221,13 +225,16 @@ export class ExtensionController {
         });
         await t.workerNode.update({ where: { id: nodeId }, data: { lastHeartbeatAt: now, capabilities: {
           radarProtocol: input.radarProtocol ?? 0, commentProtocol: input.commentProtocol ?? 0, researchProtocol: input.researchProtocol ?? 0,
+          extensionVersion: input.extensionVersion ?? null,
         } } });
         await t.extensionCommand.deleteMany({ where: { targetId: target.id, expiresAt: { lt: new Date(now.getTime() - 300_000) } } });
         const command = target.enabled ? await t.extensionCommand.findFirst({
           where: { targetId: target.id, expiresAt: { gt: now }, claimedAt: null,
-            ...(input.commentProtocol !== 1 && { action: { in: ['prepare', 'commit'] } }) }, orderBy: { expiresAt: 'asc' },
+            ...(!input.commentProtocol && { action: { in: ['prepare', 'commit'] } }),
+          }, orderBy: { expiresAt: 'asc' },
         }) : null;
-        if (!command || !await commandIsCurrent(t, command, now)) {
+        const composed = (command?.comment as ExtensionCommentContext | null)?.composed;
+        if (!command || (composed && input.commentProtocol !== 2) || !await commandIsCurrent(t, command, now)) {
           const radar = target.enabled && input.radarProtocol === 1 ? await claimRadarScan(t, target.id, input.installationId, now) : null;
           const research = !radar && target.enabled && input.researchProtocol === 1
             ? await claimResearch(t, target.id, input.installationId, now) : null;
@@ -265,11 +272,14 @@ export class ExtensionController {
       }
       if ((input.outcome === 'prepared' && (!['prepare', 'comment-prepare'].includes(command.action) || input.uid !== binding.uid))
         || (input.outcome === 'clicked' && (!['commit', 'comment-commit'].includes(command.action) || !command.authorizedAt || input.uid !== binding.uid))
-        || (input.receipt && (command.action !== 'comment-commit' || input.outcome !== 'clicked'))) {
+        || (input.receipt && (command.action !== 'comment-commit' || input.outcome !== 'clicked'))
+        || (input.verification && !input.receipt)
+        || (input.issue && (!command.action.startsWith('comment-') || input.outcome !== 'blocked'))) {
         throw new ConflictException('Kết quả không khớp với lệnh đã cấp.');
       }
       if (!command.result) await t.extensionCommand.update({ where: { id: command.id }, data: {
-        result: { outcome: input.outcome, ...(input.receipt && { receipt: input.receipt }) },
+        result: { outcome: input.outcome, ...(input.receipt && { receipt: input.receipt }), ...(input.issue && { issue: input.issue }),
+          ...(input.verification && { verification: input.verification }) },
       } });
       return { ok: true };
     });

@@ -9,9 +9,12 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
   const replay = await ctx.db.publicationComment.findFirst({ where: { ...where, status: 'QUEUED' }, include: {
     author: { include: { profile: { include: { workerNode: true } } } },
     source: { include: { post: true } },
+    sourcePost: true,
   } });
   if (!replay) return;
   const { author, source, destinationId } = replay;
+  const sourcePost = source?.post ?? replay.sourcePost;
+  const parentExternalId = source?.parentExternalId ?? null;
   const expiresAt = +replay.updatedAt + COMMENT_QUEUE_MS;
   let session: PublishSession | undefined;
   let lease: Awaited<ReturnType<typeof acquireLease>> = null;
@@ -21,21 +24,22 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
     if (author?.connector === 'fb-web' && author.profile?.workerNode && author.profile.workerNode.name !== ctx.actor) {
       throw new RetryLaterError('Chờ worker quản lý hồ sơ bình luận.');
     }
-    if (!author?.enabled || !['fb-web', EXTENSION_CONNECTOR].includes(author.connector) || !author.profile || source.post.archivedAt) {
+    if (!author?.enabled || !['fb-web', EXTENSION_CONNECTOR].includes(author.connector) || !author.profile || !sourcePost || sourcePost.archivedAt) {
       throw new Error('Bài nguồn hoặc hồ sơ đăng bình luận hiện không khả dụng.');
     }
     const remote = author.connector === EXTENSION_CONNECTOR;
     if (remote) {
-      const listener = await commentListener(ctx.db, destinationId, source);
+      const listener = await commentListener(ctx.db, destinationId, { sourcePostId: sourcePost.id, parentExternalId });
       const approved = listener && replay.personaApprovalId && await personaCommentAuthor(ctx.db, replay.personaApprovalId, listener);
       if (!approved || approved.id !== author.id) throw new Error('UID hiện tại không khớp vai đã duyệt.');
       const node = author.profile.workerNode;
+      const protocol = (node?.capabilities as { commentProtocol?: number } | null)?.commentProtocol ?? 0;
       if (!node?.lastHeartbeatAt || +ctx.clock.now() - +node.lastHeartbeatAt > EXTENSION_FRESH_MS
-        || (node.capabilities as { commentProtocol?: number } | null)?.commentProtocol !== 1) {
+        || protocol < (source ? 1 : 2)) {
         throw new RetryLaterError('Chờ đúng Chrome profile với extension hỗ trợ bình luận.');
       }
     }
-    const publication = await ctx.db.publication.findUnique({ where: { targetId_sourcePostId: { targetId: destinationId, sourcePostId: source.sourcePostId } },
+    const publication = await ctx.db.publication.findUnique({ where: { targetId_sourcePostId: { targetId: destinationId, sourcePostId: sourcePost.id } },
       include: { target: true, variant: { select: { snapshot: true } } } });
     const destination = facebookPostLink(publication?.permalink);
     if (!destination || !publication || !SUCCESS.includes(publication.status) || !publication.target.enabled) {
@@ -48,12 +52,12 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
       && !(remote && publication.commentAccessConfirmedAt)) {
       throw new Error('Bài đích ở chế độ Chỉ mình tôi. Hồ sơ khác không thể bình luận.');
     }
-    const parent = source.parentExternalId ? await ctx.db.publicationComment.findFirst({
-      where: { destinationId, source: { externalId: source.parentExternalId, sourcePostId: source.sourcePostId } },
+    const parent = parentExternalId ? await ctx.db.publicationComment.findFirst({
+      where: { destinationId, source: { externalId: parentExternalId, sourcePostId: sourcePost.id } },
     }) : null;
     // Sent together with its parent: wait (through queue retries) until the parent is on the destination post.
     if (parent && (parent.status === 'QUEUED' || parent.status === 'SENDING')) throw new RetryLaterError('Chờ bình luận cha đăng xong.');
-    if (source.parentExternalId && parent?.status !== 'POSTED') {
+    if (parentExternalId && parent?.status !== 'POSTED') {
       throw new Error(parent?.status === 'OMITTED' ? 'Bình luận cha đã được bỏ qua trên bài đích nên phản hồi này không có chỗ để đăng.'
         : 'Bình luận cha chưa đăng được trên bài đích. Gửi lại bình luận cha trước.');
     }
@@ -61,18 +65,28 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
     // A parent recorded from a pasted link may carry encoded ids; the connector's receipt uses digits.
     const parentId = facebookCommentId(parentUrl?.searchParams.get('reply_comment_id') ?? parentUrl?.searchParams.get('comment_id')) ?? undefined;
     const parentRootId = facebookCommentId(parentUrl?.searchParams.get('comment_id'));
-    if (source.parentExternalId && (!parentId || !parentRootId || !parentUrl || facebookPostId(parentUrl) !== postId)) {
+    if (parentExternalId && (!parentId || !parentRootId || !parentUrl || facebookPostId(parentUrl) !== postId)) {
       throw new Error('Chờ bình luận cha được đăng và có liên kết trên bài đích.');
     }
     const paused = (db: Tx = ctx.db) => Promise.all([...new Set([author.id, destinationId])].map(targetId =>
-      activeKillSwitch(db, { sourceId: source.post.sourceId, targetId, connector: author.connector }))).then(results => results.some(Boolean));
+      activeKillSwitch(db, { sourceId: sourcePost.sourceId, targetId, connector: author.connector }))).then(results => results.some(Boolean));
     if (await paused()) throw new Error('Đang tạm dừng đăng trên hồ sơ Facebook.');
     lease = await acquireLease(ctx.db, { resource: accountResource(author.id), holder: ctx.workerId + ':comment-publish',
       ttlMs: 240_000, now: ctx.clock.now(), purpose: 'comment-publish' });
     if (!lease) throw new RetryLaterError('Hồ sơ đang bận. Bình luận sẽ chờ.');
+    const text = source ? commentReplayBody(replay.text, source.text) : replay.text.trim();
+    if (!text) throw new Error('Bình luận trống sau khi bỏ nhãn tác giả.');
+    const known = remote ? await ctx.db.publicationComment.findMany({
+      where: { destinationId, authorTargetId: author.id, status: 'POSTED', text, externalId: { not: null },
+        OR: [{ sourcePostId: sourcePost.id }, { source: { sourcePostId: sourcePost.id } }] },
+      select: { externalId: true },
+    }) : [];
+    const knownCommentIds = known.flatMap(row => row.externalId ? [row.externalId] : []);
     const connector = ctx.registry.publisher(author.connector);
     session = await connector.openSession({ ...author, profileDir: author.profile.profileDir, ...(remote && {
-      operation: { publicationId: publication.id, fencingToken: lease.token, comment: { replayId, sendVersion } },
+      operation: { publicationId: publication.id, fencingToken: lease.token,
+        comment: { replayId, sendVersion, ...(source ? {} : { composed: true as const }),
+          ...(knownCommentIds.length ? { knownCommentIds } : {}) } },
     }) });
     if (!session.postComment || await session.sessionState() !== 'OK' || !(await session.checkIdentity(author.externalId)).ok) {
       throw new Error('Hồ sơ Facebook chưa sẵn sàng hoặc đang đăng nhập sai tài khoản.');
@@ -81,11 +95,9 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
       post.searchParams.set('comment_id', parentRootId);
       if (parentId && parentId !== parentRootId) post.searchParams.set('reply_comment_id', parentId);
     }
-    const text = commentReplayBody(replay.text, source.text);
-    if (!text) throw new Error('Bình luận trống sau khi bỏ nhãn tác giả.');
     const result = await session.postComment({ post, parentId, text }, async () => {
       await tx(ctx.db, async t => {
-        const [current] = await t.$queryRaw<Array<{ archived_at: Date | null }>>`SELECT archived_at FROM source_posts WHERE id=${source.sourcePostId}::uuid FOR SHARE`;
+        const [current] = await t.$queryRaw<Array<{ archived_at: Date | null }>>`SELECT archived_at FROM source_posts WHERE id=${sourcePost.id}::uuid FOR SHARE`;
         const now = ctx.clock.now();
         if (+now >= expiresAt || !current || current.archived_at || !await assertLeaseHeld(t, lease!, now, 30_000)) {
           throw new Error('Bài nguồn hoặc phiên đăng không còn hiệu lực.');
@@ -116,7 +128,7 @@ export async function handleCommentPublish(ctx: BrowserCtx, { replayId, sendVers
     await tx(ctx.db, async t => {
       const changed = await t.publicationComment.updateMany({ where: { ...where, status: 'SENDING' },
         data: { status: 'POSTED', ...result, sendDetail: null, updatedAt: ctx.clock.now() } });
-      if (changed.count) await audit(t, { entityType: 'source_post', entityId: source.sourcePostId, actor: ctx.actor,
+      if (changed.count) await audit(t, { entityType: 'source_post', entityId: sourcePost.id, actor: ctx.actor,
         action: 'comment_published', at: ctx.clock.now(), data: { replayId, authorTargetId: author.id, destinationId } });
     });
   } catch (err) {

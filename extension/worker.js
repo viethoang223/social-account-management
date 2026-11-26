@@ -1,9 +1,9 @@
 import { composer } from './composer.js';
-import { commentComposer } from './comment.js';
+import { commentComposer, findPostedComment } from './comment.js';
 import { facebookIdentity } from './facebook-url.js';
 import { openReelComments } from './reel-comments.js';
 import { scanRadar } from './radar-scan.js';
-import { scanResearch } from './research/job.js';
+import { readCommentThread, scanResearch } from './research/job.js';
 
 const facebook = 'https://www.facebook.com';
 const pollAlarm = 'seedingsys-poll';
@@ -40,7 +40,7 @@ async function discard(draft) {
   await chrome.storage.session.remove('draft');
   const tab = await chrome.tabs.get(draft.tabId).catch(() => null);
   // Close only our original Facebook tab, never a tab navigated somewhere else.
-  if (tab?.url === draft.url) await chrome.tabs.remove(draft.tabId).catch(() => {});
+  if (draft.ownedTab !== false && tab?.url === draft.url) await chrome.tabs.remove(draft.tabId).catch(() => {});
 }
 
 async function loaded(tabId, deadline) {
@@ -86,55 +86,78 @@ async function execute(config, command, uid, deadline) {
 }
 
 async function executeComment(config, command, uid, deadline) {
-  const { postUrl, parentId } = command.comment ?? {};
+  const { postUrl, parentId, knownCommentIds } = command.comment ?? {};
   const identity = facebookIdentity(postUrl);
-  if (!identity?.startsWith('post:') || !uid || await observedUid() !== uid || deadline <= Date.now()) return { outcome: 'blocked' };
+  const blocked = async issue => {
+    await chrome.storage.session.set({ lastCommentIssue: issue });
+    return { outcome: 'blocked', issue };
+  };
+  if (!identity?.startsWith('post:') || !uid || await observedUid() !== uid || deadline <= Date.now()) {
+    return blocked('UID, liên kết bài đích hoặc thời hạn không còn khớp lệnh.');
+  }
   const reel = new URL(postUrl).pathname.startsWith('/reel/');
   let { draft } = await chrome.storage.session.get('draft');
   const input = { postUrl, parentId, uid, text: command.caption, deadline };
+  const sameUid = async () => await observedUid() === uid;
   const run = async (target, action, data = input) => {
     const [view] = await chrome.scripting.executeScript({ target, func: commentComposer, args: [action, data] });
     return view;
   };
   if (command.action === 'comment-prepare') {
-    await chrome.storage.session.remove('commentPrepareError');
+    await chrome.storage.session.remove('lastCommentIssue');
     if (draft) await discard(draft);
-    // Facebook's Reel editor does not retain text entered while its tab is inactive.
-    const tab = await chrome.tabs.create({ url: postUrl, active: reel });
-    if (tab.id === undefined) return { outcome: 'blocked' };
-    draft = { kind: 'comment', uid, sessionId: command.sessionId, tabId: tab.id, url: postUrl, expiry: Date.now() + 180_000 };
+    const before = await readCommentThread(postUrl, Math.min(deadline - 25_000, Date.now() + 14_000), sameUid).catch(() => null);
+    const current = parentId ? null : (await chrome.tabs.query({ active: true, url: 'https://www.facebook.com/*' }))
+      .find(tab => tab.status === 'complete' && tab.url === postUrl);
+    const tab = current ?? await chrome.tabs.create({ url: postUrl, active: true });
+    if (tab.id === undefined) return blocked('Chrome không cung cấp được tab bài đích.');
+    draft = { kind: 'comment', uid, sessionId: command.sessionId, tabId: tab.id, url: postUrl,
+      ownedTab: !current, expiry: Date.now() + 180_000 };
     await chrome.storage.session.set({ draft });
     const page = await loaded(tab.id, Math.min(deadline, Date.now() + 15_000));
-    if (facebookIdentity(page?.url) !== identity || await observedUid() !== uid) return { outcome: 'blocked' };
+    if (facebookIdentity(page?.url) !== identity || await observedUid() !== uid) {
+      return blocked('Chrome chưa mở đúng bài đích hoặc phiên đã đổi UID.');
+    }
+    const window = await chrome.windows.get(page.windowId);
+    if (!window.focused) await chrome.windows.update(page.windowId, { focused: true });
+    if (!page.active) await chrome.tabs.update(tab.id, { active: true });
     draft.url = page.url;
     await chrome.storage.session.set({ draft });
     const target = { tabId: tab.id };
     if (reel) {
       const [opened] = await chrome.scripting.executeScript({ target, func: openReelComments, args: [postUrl, deadline] });
       if (!opened?.result || !opened.documentId || await observedUid() !== uid) {
-        await chrome.storage.session.set({ commentPrepareError: 'Không mở được khung bình luận đúng Reel.' });
-        return { outcome: 'blocked' };
+        return blocked('Không mở được khung bình luận đúng Reel hoặc phiên đã đổi UID.');
       }
       target.documentIds = [opened.documentId];
     }
     const view = await run(target, 'prepare');
     if (!view?.documentId || !view.result?.ok || await observedUid() !== uid) {
-      await chrome.storage.session.set({ commentPrepareError: view?.result?.problem ?? 'Không xác nhận được tài liệu hoặc tài khoản.' });
-      return { outcome: 'blocked' };
+      return blocked(view?.result?.issue ?? 'Phiên bình luận hoặc trang đã thay đổi.');
     }
-    await chrome.storage.session.set({ draft: { ...draft, documentId: view.documentId } });
+    await chrome.storage.session.set({ draft: { ...draft, documentId: view.documentId,
+      before: before && { comments: before.comments, stoppedEarly: before.stoppedEarly } } });
     return { outcome: 'prepared' };
   }
   if (command.action !== 'comment-commit' || draft?.kind !== 'comment' || draft.sessionId !== command.sessionId
-    || draft.uid !== uid || !draft.documentId) return { outcome: 'blocked' };
+    || draft.uid !== uid || !draft.documentId) return blocked('Không còn bản nháp gắn với phiên này.');
   const target = { tabId: draft.tabId, documentIds: [draft.documentId] };
-  if (!(await run(target, 'inspect'))?.result?.ok) return { outcome: 'blocked' };
+  if (!(await run(target, 'inspect'))?.result?.ok) return blocked('Không còn xác minh được bản nháp và nút gửi.');
   const requestedAt = Date.now();
   const permit = await api(config, { action: 'authorize', commandId: command.id });
-  if (await observedUid() !== uid) return { outcome: 'blocked' };
+  if (await observedUid() !== uid) return blocked('Phiên đã đổi UID trước khi gửi.');
   await chrome.storage.session.remove('draft');
   const result = (await run(target, 'commit', { ...input, deadline: Math.min(deadline, requestedAt + permit.lifetimeMs) }))?.result;
-  return result?.ok ? { outcome: 'clicked', ...(result.receipt && { receipt: result.receipt }) } : { outcome: 'blocked' };
+  if (!result?.ok) return blocked('Không thể bấm nút gửi đã được xác minh.');
+  if (result.receipt) return { outcome: 'clicked', receipt: result.receipt };
+  if (draft.before && !draft.before.stoppedEarly) {
+    for (let attempt = 0; attempt < 2 && Date.now() < deadline - 5_000 && await sameUid(); attempt++) {
+      const after = await readCommentThread(postUrl, Math.min(deadline - 2_000, Date.now() + 21_000), sameUid).catch(() => null);
+      const receipt = findPostedComment(input, draft.before, after, knownCommentIds);
+      if (receipt && await sameUid()) return { outcome: 'clicked', receipt, verification: 'reopened-post' };
+    }
+  }
+  return { outcome: 'clicked' };
 }
 
 async function poll() {
@@ -143,7 +166,8 @@ async function poll() {
   if (!config) return { state: 'DISCONNECTED' };
   const uid = await observedUid();
   const started = Date.now();
-  const data = await api(config, { action: 'poll', radarProtocol: 1, commentProtocol: 1, researchProtocol: 1 });
+  const data = await api(config, { action: 'poll', radarProtocol: 1, commentProtocol: 2, researchProtocol: 1,
+    extensionVersion: chrome.runtime.getManifest().version });
   if (data.command) {
     const command = data.command;
     const deadline = started + command.lifetimeMs;
@@ -154,7 +178,11 @@ async function poll() {
       const report = await scanResearch(command, deadline, async () => !!uid && await observedUid() === uid).catch(() => null);
       await api(config, { action: 'research-complete', commandId: command.id, report });
     } else if (['comment-prepare', 'comment-commit'].includes(command.action)) {
-      const result = await executeComment(config, command, uid, deadline).catch(() => ({ outcome: 'blocked' }));
+      const result = await executeComment(config, command, uid, deadline).catch(async () => {
+        const issue = 'Chrome hoặc máy chủ từ chối thực thi lệnh bình luận.';
+        await chrome.storage.session.set({ lastCommentIssue: issue });
+        return { outcome: 'blocked', issue };
+      });
       await api(config, { action: 'complete', commandId: command.id, ...result });
     } else {
       const outcome = await execute(config, command, uid, deadline).catch(() => 'blocked');

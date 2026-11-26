@@ -56,6 +56,66 @@ it('recognizes a profile and grants reads only to the installed extension with t
   expect((await new PersonasController(h.db, h.clock).workspace()).scans).toEqual([]);
 });
 
+it.each([
+  { sourceKind: 'post', url: postUrl },
+  { sourceKind: 'reel', url: 'https://www.facebook.com/reel/930/' },
+])('publishes a composed root comment on a $sourceKind with no source comments', async ({ sourceKind, url }) => {
+  const sender = await pair('B1', directory.profiles[0].uid, { ...commentProtocol, commentProtocol: 2 });
+  const owner = await pair('B2', directory.profiles[1].uid);
+  const personas = new PersonasController(h.db, h.clock);
+  await personas.importPeople({ revision: 0, registry: directory }, admin);
+  const role = { from: 'author', to: 'advisor' };
+  const preview = await personas.preview(role);
+  const approved = await personas.approve({ ...role, fingerprint: preview.fingerprint }, admin);
+  const sourceId = h.ids.sources.A1;
+  const destinationId = h.ids.targets.B2;
+  await h.db.source.update({ where: { id: sourceId }, data: { connector: 'manual' } });
+  const { id: job } = await research.enqueue({ url, limit: 5 }, admin);
+  await expect(sender.poll()).resolves.toMatchObject({ command: { id: job, action: 'research-scan' } });
+  await sender.call({ action: 'research-complete', commandId: job, report: {
+    kind: 'RESEARCH_POST', url, body: 'Bài chưa có bình luận', captionPartial: false, author: 'Chủ bài',
+    authorUrl: profile, location: '', mediaLinks: [], hasMedia: sourceKind === 'reel', mediaPartial: false, sourceKind,
+    partial: false, comments: [],
+  } });
+  const { postId } = await research.importPost(job, { sourceId, useExisting: true, textOnly: sourceKind === 'reel' }, admin);
+  expect(await h.db.sourceComment.count({ where: { sourcePostId: postId } })).toBe(0);
+  const draft = randomUUID();
+  const text = 'Bình luận mới từ dashboard.';
+  const update = (body: object) => library.updateNewComment(postId, destinationId, draft, body, admin);
+  await update({ action: 'draft', text, personaApprovalId: approved.id });
+  await expect(update({ action: 'send' })).rejects.toThrow('duyệt bình luận');
+  await update({ action: 'approve', text, personaApprovalId: approved.id });
+  await library.confirmCommentAccess(postId, destinationId, { confirmed: true }, admin);
+  await update({ action: 'send' });
+  await expect(update({ action: 'send' })).rejects.toThrow('đang xử lý');
+  h.browser.registry.addPublisher(new ExtensionPublishConnector(h.db, h.clock));
+  const run = handleCommentPublish(h.browser, { replayId: draft, sendVersion: 1 });
+  const claim = async (action: 'comment-prepare' | 'comment-commit') => {
+    await expect.poll(() => h.db.extensionCommand.count({ where: { action, claimedAt: null } })).toBe(1);
+    await expect(owner.poll()).resolves.toMatchObject({ command: null });
+    await expect(sender.poll({ commentProtocol: 1 })).resolves.toMatchObject({ command: null });
+    const response = await sender.poll();
+    expect(response).toMatchObject({ command: { action, caption: text, comment: { replayId: draft, postUrl: url, composed: true } } });
+    if (!('command' in response) || !response.command) throw new Error('Missing extension command');
+    return response.command.id;
+  };
+  const prepare = await claim('comment-prepare');
+  await sender.call({ action: 'complete', commandId: prepare, outcome: 'prepared' });
+  const commit = await claim('comment-commit');
+  await sender.call({ action: 'authorize', commandId: commit });
+  await expect(sender.call({ action: 'authorize', commandId: commit })).rejects.toThrow();
+  const permalink = url + '?comment_id=910';
+  await sender.call({ action: 'complete', commandId: commit, outcome: 'clicked', receipt: { externalId: '910', permalink },
+    verification: 'reopened-post' });
+  await run;
+  expect(await library.detail(postId, admin)).toMatchObject({ comments: [],
+    composedComments: [{ id: draft, text, status: 'POSTED', permalink, author: { code: 'B1' } }] });
+  expect(await h.db.publicationComment.findUnique({ where: { id: draft } })).toMatchObject({ sourceCommentId: null, sourcePostId: postId });
+  expect(await h.db.extensionCommand.findUnique({ where: { id: commit } })).toMatchObject({
+    result: { outcome: 'clicked', verification: 'reopened-post', receipt: { externalId: '910', permalink } },
+  });
+});
+
 it('imports a research thread once, dispatches approved root and reply to different UIDs, and never retries an uncertain click', async () => {
   const sender = await pair('B1', directory.profiles[0].uid);
   const owner = await pair('B2', directory.profiles[1].uid);

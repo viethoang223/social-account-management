@@ -17,6 +17,8 @@ const variantFields = { id: true, targetId: true, caption: true, contentType: tr
   snapshot: true, snapshotHash: true, revision: { select: revisionFields } } as const;
 const publicationFields = { id: true, variantId: true, targetId: true, status: true, permalink: true, verifiedAt: true,
   lastReason: true, commentAccessConfirmedAt: true, variant: { select: variantFields } } as const;
+const replayFields = { id: true, destinationId: true, authorTargetId: true, personaApprovalId: true, text: true,
+  status: true, permalink: true, externalId: true, sendDetail: true, updatedAt: true, author: { select: { code: true } } } as const;
 
 function revisionView(value: Prisma.SourcePostRevisionGetPayload<{ select: typeof revisionFields }>) {
   const { raw, ...revision } = value;
@@ -94,7 +96,7 @@ export class LibraryController {
       } } } },
     });
     if (!post?.latestRevisionId) throw new NotFoundException('Không tìm thấy bài.');
-    const [revision, variants, publications, scan, comments, authors, roleApprovals] = await Promise.all([
+    const [revision, variants, publications, scan, comments, composedComments, authors, roleApprovals] = await Promise.all([
       this.db.sourcePostRevision.findUniqueOrThrow({ where: { id: post.latestRevisionId }, select: revisionFields }),
       this.db.contentVariant.findMany({ where: { sourcePostId: id, status: { not: 'SUPERSEDED' } },
         orderBy: [{ targetId: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }], distinct: ['targetId'], select: variantFields }),
@@ -102,9 +104,9 @@ export class LibraryController {
       this.db.commentScan.findFirst({ where: { sourcePostId: id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
       this.db.sourceComment.findMany({ where: { sourcePostId: id }, orderBy: [{ position: 'asc' }, { id: 'asc' }],
         select: { id: true, externalId: true, parentExternalId: true, authorName: true, text: true, permalink: true, postedAt: true,
-          replays: { select: { destinationId: true, authorTargetId: true, personaApprovalId: true, text: true, status: true, permalink: true, externalId: true, sendDetail: true, updatedAt: true,
-            author: { select: { code: true } },
-          } } } }),
+          replays: { select: replayFields } } }),
+      this.db.publicationComment.findMany({ where: { sourcePostId: id },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }], select: replayFields }),
       this.db.targetAccount.findMany({ where: { enabled: true, connector: { in: ['fb-web', EXTENSION_CONNECTOR] } },
         select: { ...profileFields, connector: true, externalId: true }, orderBy: { code: 'asc' } }),
       actor?.role === 'admin' || actor?.role === 'reviewer'
@@ -114,7 +116,15 @@ export class LibraryController {
     const ids = [...new Set([...post.source.mappings.map(m => m.target.id), ...variants.map(v => v.targetId), ...publications.map(p => p.targetId)])];
     const targets = await this.db.targetAccount.findMany({ where: { id: { in: ids } }, select: { ...profileFields, audience: true }, orderBy: { code: 'asc' } });
     const { source, ...record } = post;
-    const timedOut = scan?.status === 'RUNNING' && +this.clock.now() - +scan.updatedAt >= COMMENT_STALL_MS;
+    const now = +this.clock.now();
+    const timedOut = scan?.status === 'RUNNING' && now - +scan.updatedAt >= COMMENT_STALL_MS;
+    const replayView = (r: Prisma.PublicationCommentGetPayload<{ select: typeof replayFields }>, sourceText?: string) => {
+      const stale = now - +r.updatedAt >= (r.status === 'QUEUED' ? COMMENT_QUEUE_MS : COMMENT_STALL_MS);
+      const text = sourceText !== undefined && ['DRAFT', 'APPROVED', 'QUEUED', 'FAILED'].includes(r.status) ? commentReplayBody(r.text, sourceText) : r.text;
+      if (stale && r.status === 'QUEUED') return { ...r, text, status: 'FAILED', sendDetail: 'Hết thời gian chờ worker. Có thể gửi lại.' };
+      if (stale && r.status === 'SENDING') return { ...r, status: 'UNKNOWN', sendDetail: 'Chưa rõ kết quả. Đối chiếu trên Facebook.' };
+      return { ...r, text };
+    };
     return {
       approvedRoles: roleApprovals.flatMap(approval => {
         const role = approvedPersona(approval.context);
@@ -129,13 +139,9 @@ export class LibraryController {
       revision: revisionView(revision),
       scan: timedOut ? { ...scan, status: 'FAILED', detail: 'Lượt quét đã hết thời gian. Có thể quét lại.' } : scan,
       canScan: !post.archivedAt && COMMENT_READERS.includes(source.connector) && (source.connector === 'fb-graph' || !!post.permalink),
-      comments: comments.map(c => ({ ...c, text: commentBody(c.text), permalink: facebookUrl(c.permalink)?.href ?? null, replays: c.replays.map(r => {
-        const stale = +this.clock.now() - +r.updatedAt >= (r.status === 'QUEUED' ? COMMENT_QUEUE_MS : COMMENT_STALL_MS);
-        const text = ['DRAFT', 'APPROVED', 'QUEUED', 'FAILED'].includes(r.status) ? commentReplayBody(r.text, c.text) : r.text;
-        if (stale && r.status === 'QUEUED') return { ...r, text, status: 'FAILED', sendDetail: 'Hết thời gian chờ worker. Có thể gửi lại.' };
-        if (stale && r.status === 'SENDING') return { ...r, status: 'UNKNOWN', sendDetail: 'Chưa rõ kết quả. Đối chiếu trên Facebook.' };
-        return { ...r, text };
-      }) })),
+      comments: comments.map(c => ({ ...c, text: commentBody(c.text), permalink: facebookUrl(c.permalink)?.href ?? null,
+        replays: c.replays.map(r => replayView(r, c.text)) })),
+      composedComments: composedComments.map(r => replayView(r)),
       authors: authors.map(({ externalId, ...author }) => author),
       destinations: targets.map(target => {
         const publication = publications.find(p => p.targetId === target.id);
@@ -165,7 +171,7 @@ export class LibraryController {
       if (archived && await t.publication.findFirst({ where: { sourcePostId: id, status: { in: [...UNRESOLVED] } }, select: { id: true } })) {
         throw new ConflictException('Bài đang đăng hoặc chờ đối soát. Hoàn tất lượt đăng trước khi xóa khỏi kho.');
       }
-      const comments = { source: { sourcePostId: id } } satisfies Prisma.PublicationCommentWhereInput;
+      const comments = { OR: [{ sourcePostId: id }, { source: { sourcePostId: id } }] } satisfies Prisma.PublicationCommentWhereInput;
       if (archived && await t.publicationComment.findFirst({ where: { ...comments, status: { in: ['SENDING', 'UNKNOWN'] } }, select: { id: true } })) {
         throw new ConflictException('Có bình luận đang gửi hoặc chờ đối chiếu. Hoàn tất lượt gửi trước khi xóa bài khỏi kho.');
       }
@@ -338,6 +344,17 @@ export class LibraryController {
   async updateComment(@Param('id', ParseUUIDPipe) id: string, @Param('targetId', ParseUUIDPipe) targetId: string,
     @Param('commentId', ParseUUIDPipe) commentId: string,
     @Body() body: unknown, @Actor() actor: Principal) {
+    return this.updateCommentDraft(id, targetId, commentId, body, actor, false);
+  }
+
+  @Patch('posts/:id/destinations/:targetId/new-comments/:commentId')
+  @Roles('reviewer', 'operator')
+  async updateNewComment(@Param('id', ParseUUIDPipe) id: string, @Param('targetId', ParseUUIDPipe) targetId: string,
+    @Param('commentId', ParseUUIDPipe) commentId: string, @Body() body: unknown, @Actor() actor: Principal) {
+    return this.updateCommentDraft(id, targetId, commentId, body, actor, true);
+  }
+
+  private async updateCommentDraft(id: string, targetId: string, commentId: string, body: unknown, actor: Principal, composed: boolean) {
     const input = parse(z.discriminatedUnion('action', [
       z.object({ action: z.literal('draft'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid().optional(), personaApprovalId: z.string().uuid().optional() }),
       z.object({ action: z.literal('approve'), text: z.string().trim().min(1).max(4000), authorTargetId: z.string().uuid().optional(), personaApprovalId: z.string().uuid().optional() }),
@@ -356,10 +373,21 @@ export class LibraryController {
       const pub = await t.publication.findUnique({ where: { targetId_sourcePostId: { targetId, sourcePostId: id } } });
       const mapping = await t.sourceTargetMapping.findUnique({ where: { sourceId_targetId: { sourceId: post.sourceId, targetId } }, select: { enabled: true } });
       if (!pub && !mapping?.enabled) throw new ConflictException('Profile đích chưa thuộc luồng của bài nguồn.');
-      const comment = await t.sourceComment.findFirst({ where: { id: commentId, sourcePostId: id } });
-      if (!comment) throw new NotFoundException('Bình luận không thuộc bài nguồn này.');
-      const where = { destinationId_sourceCommentId: { destinationId: targetId, sourceCommentId: commentId } };
-      const current = await t.publicationComment.findUnique({ where });
+      if (composed && (!pub || !SUCCESS.includes(pub.status) || !facebookPostLink(pub.permalink))) {
+        throw new ConflictException('Cần bài đích đã đăng và có liên kết trực tiếp để soạn bình luận mới.');
+      }
+      const sourceComment = composed ? null : await t.sourceComment.findFirst({ where: { id: commentId, sourcePostId: id } });
+      if (!composed && !sourceComment) throw new NotFoundException('Bình luận không thuộc bài nguồn này.');
+      const comment = sourceComment ?? { sourcePostId: id, parentExternalId: null, text: '' };
+      const current = composed
+        ? await t.publicationComment.findUnique({ where: { id: commentId } })
+        : await t.publicationComment.findUnique({ where: { destinationId_sourceCommentId: { destinationId: targetId, sourceCommentId: commentId } } });
+      if (composed && current && (current.sourcePostId !== id || current.destinationId !== targetId)) {
+        throw new NotFoundException('Bình luận không thuộc bài đích này.');
+      }
+      if (composed && !current && input.action !== 'draft' && input.action !== 'approve') {
+        throw new NotFoundException('Chưa có bản nháp bình luận.');
+      }
       if (current?.status === 'POSTED') throw new ConflictException('Bình luận này đã ghi nhận đăng.');
       const now = this.clock.now();
       const stale = !!current && +now - +current.updatedAt >= (current.status === 'QUEUED' ? COMMENT_QUEUE_MS : COMMENT_STALL_MS);
@@ -413,7 +441,8 @@ export class LibraryController {
           data: { status: 'POSTED', externalId: commentId, permalink: actual.href, sendDetail: null, updatedAt: now } });
         if (!updated.count) throw new ConflictException('Lượt gửi đã thay đổi. Tải lại bài.');
       } else {
-        const text = input.action === 'omit' ? current?.text ?? comment.text : commentReplayBody(removeAdvertisingLinks(input.text), comment.text);
+        const text = input.action === 'omit' ? current?.text ?? comment.text
+          : composed ? input.text : commentReplayBody(removeAdvertisingLinks(input.text), comment.text);
         if (input.action !== 'omit' && !text) throw new BadRequestException('Nhập nội dung bình luận.');
         let authorTargetId = current?.authorTargetId;
         let personaApprovalId = current?.personaApprovalId ?? null;
@@ -429,11 +458,13 @@ export class LibraryController {
           authorTargetId = author.id;
         }
         const status = input.action === 'approve' ? 'APPROVED' : input.action === 'omit' ? 'OMITTED' : 'DRAFT';
-        await t.publicationComment.upsert({ where, update: { status, text, authorTargetId, personaApprovalId, sendDetail: null },
-          create: { destinationId: targetId, sourceCommentId: commentId, status, text, authorTargetId, personaApprovalId } });
+        const update = { status, text, authorTargetId, personaApprovalId, sendDetail: null } as const;
+        if (current) await t.publicationComment.update({ where: { id: current.id }, data: update });
+        else await t.publicationComment.create({ data: { ...update, destinationId: targetId,
+          ...(composed ? { id: commentId, sourcePostId: id } : { sourceCommentId: commentId }) } });
       }
       await audit(t, { entityType: 'source_post', entityId: id, action: 'comment_' + input.action, actor: actor.actor,
-        at: this.clock.now(), data: { sourceCommentId: commentId, targetId, publicationId: pub?.id } });
+        at: this.clock.now(), data: { ...(composed ? { composedCommentId: commentId } : { sourceCommentId: commentId }), targetId, publicationId: pub?.id } });
       return { ok: true };
     });
   }
@@ -488,13 +519,13 @@ export class LibraryController {
   private async queueCommentSend(t: Tx, { postId: id, sourceId, targetId, pub, comment, current, now, queuedParents }: {
     postId: string; sourceId: string; targetId: string; now: Date; queuedParents?: Set<string>;
     pub: Prisma.PublicationGetPayload<object> | null;
-    comment: { externalId: string; parentExternalId: string | null; text: string; sourcePostId: string };
+    comment: { parentExternalId: string | null; text: string; sourcePostId: string };
     current: Prisma.PublicationCommentGetPayload<object> | null;
   }) {
     if (!current || !['APPROVED', 'FAILED', 'QUEUED'].includes(current.status) || !pub || !SUCCESS.includes(pub.status) || !facebookPostLink(pub.permalink)) {
       throw new ConflictException('Cần duyệt bình luận và xác nhận liên kết trực tiếp của bài đích.');
     }
-    const text = commentReplayBody(current.text, comment.text);
+    const text = current.sourceCommentId ? commentReplayBody(current.text, comment.text) : current.text.trim();
     if (!text) throw new ConflictException('Cần duyệt bình luận có nội dung trước khi gửi.');
     const author = current.authorTargetId && await t.targetAccount.findFirst({ where: { id: current.authorTargetId, enabled: true,
       connector: { in: ['fb-web', EXTENSION_CONNECTOR] }, profile: { isNot: null } } });

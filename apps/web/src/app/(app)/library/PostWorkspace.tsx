@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { ActionButton, bff, useSubmit } from '@/components/client';
 import { Badge } from '@/components/ui';
 import { fmtTime, reasonText } from '@/lib/format';
-import type { Destination, PostDetail, Revision, SourceComment } from './types';
+import type { CommentReplay, Destination, PostDetail, Revision, SourceComment } from './types';
 import styles from './library.module.css';
 
 const SCAN_LABEL = { QUEUED: 'Chờ quét', RUNNING: 'Đang quét bình luận', COMPLETE: 'Đã đọc hết phần truy cập được', PARTIAL: 'Đã lưu một phần', FAILED: 'Quét gián đoạn' };
@@ -147,17 +147,18 @@ function orderComments(items: SourceComment[]) {
   return lines;
 }
 
-function CommentDraft({ detail, comment, parent, target, canReview, canOperate }: {
-  detail: PostDetail; comment: SourceComment; parent?: SourceComment; target: Destination; canReview: boolean; canOperate: boolean;
-}) {
-  const replay = comment.replays.find(r => r.destinationId === target.target.id);
+function CommentDraft({ detail, comment, parent, composed, target, canReview, canOperate }: {
+  detail: PostDetail; target: Destination; canReview: boolean; canOperate: boolean;
+} & ({ comment: SourceComment; parent?: SourceComment; composed?: never }
+  | { composed: { id: string; replay?: CommentReplay }; comment?: never; parent?: never })) {
+  const replay = composed ? composed.replay : comment.replays.find(r => r.destinationId === target.target.id);
   const parentReplay = parent?.replays.find(r => r.destinationId === target.target.id);
   const legacyAuthors = detail.authors.filter(a => a.connector === 'fb-web');
-  const listenerId = comment.parentExternalId ? parentReplay?.authorTargetId : target.target.id;
+  const listenerId = comment?.parentExternalId ? parentReplay?.authorTargetId : target.target.id;
   const roles = detail.approvedRoles.filter(role => role.listenerId === listenerId);
   const savedAuthor = replay?.personaApprovalId ? `role:${replay.personaApprovalId}`
     : replay?.authorTargetId ?? (roles.length === 1 ? `role:${roles[0].id}` : legacyAuthors.find(a => a.id === target.target.id)?.id ?? '');
-  const savedText = replay?.text ?? comment.text;
+  const savedText = replay?.text ?? comment?.text ?? '';
   const [edit, setEdit] = useState({ savedAuthor, savedText, author: savedAuthor, text: savedText });
   const currentEdit = edit.savedAuthor === savedAuthor && edit.savedText === savedText ? edit : undefined;
   const author = currentEdit?.author ?? savedAuthor;
@@ -165,11 +166,11 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(false);
   const submit = useSubmit();
-  const path = `library/posts/${detail.post.id}/destinations/${target.target.id}/comments/${comment.id}`;
+  const path = `library/posts/${detail.post.id}/destinations/${target.target.id}/${composed ? 'new-comments/' + composed.id : 'comments/' + comment.id}`;
   const publication = target.publication;
   // A reply may be sent while its parent is being sent: the worker waits for the parent first.
   const parentOnItsWay = parentReplay?.status === 'QUEUED' || parentReplay?.status === 'SENDING';
-  const destinationLink = comment.parentExternalId ? parentReplay?.permalink ?? (parentOnItsWay ? publication?.permalink : undefined) : publication?.permalink;
+  const destinationLink = comment?.parentExternalId ? parentReplay?.permalink ?? (parentOnItsWay ? publication?.permalink : undefined) : publication?.permalink;
   const inFlight = replay?.status === 'QUEUED' || replay?.status === 'SENDING';
   const canHandoff = !!replay && ['APPROVED', 'FAILED', 'UNKNOWN'].includes(replay.status);
   const canPost = canHandoff && !!destinationLink && !!publication?.directLink && SUCCESS.includes(publication.status);
@@ -190,7 +191,7 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
             {legacyAuthors.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
           </select>
         </label>
-        {!roles.length && <p className="muted">Duyệt chiều xưng hô với {comment.parentExternalId ? 'người gửi bình luận cha' : 'chủ bài đích'} trong <a href="/personas">Phân vai &amp; Radar</a>.</p>}
+        {!roles.length && <p className="muted">Duyệt chiều xưng hô với {comment?.parentExternalId ? 'người gửi bình luận cha' : 'chủ bài đích'} trong <a href="/personas">Phân vai &amp; Radar</a>.</p>}
         <label>Nội dung bình luận<textarea rows={3} maxLength={4000} value={text}
           onChange={e => setEdit({ savedAuthor, savedText, author, text: e.target.value })} /></label>
         <div className={styles.actions}>
@@ -198,7 +199,7 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
             onClick={() => submit.run(() => bff('PATCH', path, { action: 'draft', text, ...authorInput }))}>Lưu nháp</button>
           <button type="button" className="primary" disabled={submit.pending || !selected || !text.trim() || (replay?.status === 'APPROVED' && !dirty)}
             onClick={() => submit.run(() => bff('PATCH', path, { action: 'approve', text, ...authorInput }), 'Đã duyệt bình luận')}>Duyệt bình luận</button>
-          <ActionButton method="PATCH" path={path} body={{ action: 'omit' }} disabled={replay?.status === 'OMITTED'}>Bỏ qua</ActionButton>
+          {(!composed || replay) && <ActionButton method="PATCH" path={path} body={{ action: 'omit' }} disabled={replay?.status === 'OMITTED'}>Bỏ qua</ActionButton>}
         </div>
       </>}
       {replay?.sendDetail && <p className="muted" role="status">{replay.sendDetail}</p>}
@@ -221,7 +222,7 @@ function CommentDraft({ detail, comment, parent, target, canReview, canOperate }
           disabled={submit.pending} confirm="Bạn đã mở đúng bài và đối chiếu trên Facebook rằng bình luận chưa xuất hiện?">
           Xác nhận chưa đăng
         </ActionButton>}
-      </div> : <p className="muted">{!(publication && SUCCESS.includes(publication.status) && comment.parentExternalId)
+      </div> : <p className="muted">{!(publication && SUCCESS.includes(publication.status) && comment?.parentExternalId)
         ? 'Chờ bài đích đăng thành công và có liên kết Facebook.'
         : !parent ? 'Chưa quét được bình luận cha. Quét lại bình luận của bài nguồn trước khi đăng phản hồi này.'
         : parentReplay?.status === 'OMITTED' ? 'Bình luận cha đã được bỏ qua trên bài đích nên phản hồi này không có chỗ để đăng.'
@@ -238,8 +239,12 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
   const { source, post, revision, scan, comments, destinations } = detail;
   const [targetCode, setTargetCode] = useState(requestedTarget ?? destinations[0]?.target.code ?? '');
   const [selectedComment, setSelectedComment] = useState<string>();
+  const [selectedComposed, setSelectedComposed] = useState<string>();
   const [visible, setVisible] = useState(40);
   const dest = destinations.find(d => d.target.code === targetCode) ?? destinations[0];
+  const composed = detail.composedComments.filter(row => row.destinationId === dest?.target.id);
+  const selectedDraft = composed.find(row => row.id === selectedComposed);
+  const canCompose = canReview && !!dest?.publication?.directLink && SUCCESS.includes(dest.publication.status);
   const lines = useMemo(() => orderComments(comments), [comments]);
   const byId = useMemo(() => new Map(comments.map(c => [c.externalId, c])), [comments]);
   const running = scan?.status === 'RUNNING' || scan?.status === 'QUEUED';
@@ -262,7 +267,7 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
             : `Chuyển bài khỏi kho ${source.code} vào thùng rác và dừng các lượt đăng đang chờ?`}>
           {post.archivedAt ? 'Khôi phục bài' : 'Xóa khỏi kho nguồn'}
         </ActionButton>}
-        {destinations.length > 1 && <label>Profile đích <select value={dest?.target.code} onChange={e => { setTargetCode(e.target.value); setSelectedComment(undefined); }}>
+        {destinations.length > 1 && <label>Profile đích <select value={dest?.target.code} onChange={e => { setTargetCode(e.target.value); setSelectedComment(undefined); setSelectedComposed(undefined); }}>
           {destinations.map(d => <option key={d.target.id} value={d.target.code}>{d.target.code} · {d.target.name}</option>)}
         </select></label>}
       </div>
@@ -276,6 +281,7 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
         <div className={styles.comparisonHeading}>
           <div><h2>Bình luận</h2><p className="muted">{comments.length} đã lưu{totals && dest && ` · ${totals.approved} chờ đăng · ${totals.posted} đã ghi nhận ở ${dest.target.code}`}</p></div>
           <div className={styles.actions}>
+            {canCompose && <button type="button" className="primary" onClick={() => setSelectedComposed(crypto.randomUUID())}>Soạn bình luận mới</button>}
             {canOperate && dest?.publication?.extensionTarget && dest.publication.directLink && SUCCESS.includes(dest.publication.status) &&
               <ActionButton method="PATCH" path={`library/posts/${post.id}/destinations/${dest.target.id}/comment-access`}
                 body={{ confirmed: !dest.publication.commentAccessConfirmed }}
@@ -298,6 +304,18 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
         </div>
         {sendAll.error && <p className="err" role="alert">{sendAll.error}</p>}
         {sendAll.done && <p className="okmsg" role="status">{sendAll.done}</p>}
+        {composed.length > 0 && <ol className={styles.commentList} aria-label="Bình luận soạn mới">
+          {composed.map(row => <li key={row.id}>
+            <header><strong>{row.author?.code ?? 'Bình luận mới'}</strong> <Badge s={row.status} text={REPLAY_LABEL[row.status]} /></header>
+            <p>{row.text}</p>
+            {row.permalink && row.status === 'POSTED'
+              ? <a href={row.permalink} target="_blank" rel="noreferrer">Xem bình luận trên Facebook ↗</a>
+              : (canReview || canOperate) && <button type="button" className="sm" aria-expanded={selectedComposed === row.id}
+                onClick={() => setSelectedComposed(selectedComposed === row.id ? undefined : row.id)}>Xử lý bình luận</button>}
+          </li>)}
+        </ol>}
+        {dest && selectedComposed && (selectedDraft || canCompose) && <CommentDraft key={selectedComposed}
+          detail={detail} composed={{ id: selectedComposed, replay: selectedDraft }} target={dest} canReview={canReview} canOperate={canOperate} />}
         {!source.enabled && detail.canScan && <p className="muted">Nguồn đang tắt quét tự động. Bạn có thể quét bình luận của riêng bài này.</p>}
         {!detail.canScan && !scan && <p className="muted">Kết nối của bài này chưa hỗ trợ quét bình luận.</p>}
         {scan && <div className={styles.progress} role="status">
