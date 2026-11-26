@@ -15,6 +15,8 @@ async function check() {
       LOGGED_OUT: 'Đăng nhập Facebook trong profile này.',
       DISCONNECTED: 'Nhập địa chỉ và mã profile để kết nối.',
     })[result.state] ?? result.message ?? 'Không kết nối được.';
+    const { commentPrepareError } = await chrome.storage.session.get('commentPrepareError');
+    if (commentPrepareError) status.textContent += ' ' + commentPrepareError;
   } catch (error) {
     status.textContent = error.message;
   }
