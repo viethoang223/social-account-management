@@ -1,6 +1,7 @@
 import { composer } from './composer.js';
 import { commentComposer } from './comment.js';
 import { facebookIdentity } from './facebook-url.js';
+import { openReelComments } from './reel-comments.js';
 import { scanRadar } from './radar-scan.js';
 import { scanResearch } from './research/job.js';
 
@@ -88,6 +89,7 @@ async function executeComment(config, command, uid, deadline) {
   const { postUrl, parentId } = command.comment ?? {};
   const identity = facebookIdentity(postUrl);
   if (!identity?.startsWith('post:') || !uid || await observedUid() !== uid || deadline <= Date.now()) return { outcome: 'blocked' };
+  const reel = new URL(postUrl).pathname.startsWith('/reel/');
   let { draft } = await chrome.storage.session.get('draft');
   const input = { postUrl, parentId, uid, text: command.caption, deadline };
   const run = async (target, action, data = input) => {
@@ -95,8 +97,10 @@ async function executeComment(config, command, uid, deadline) {
     return view;
   };
   if (command.action === 'comment-prepare') {
+    await chrome.storage.session.remove('commentPrepareError');
     if (draft) await discard(draft);
-    const tab = await chrome.tabs.create({ url: postUrl, active: false });
+    // Facebook's Reel editor does not retain text entered while its tab is inactive.
+    const tab = await chrome.tabs.create({ url: postUrl, active: reel });
     if (tab.id === undefined) return { outcome: 'blocked' };
     draft = { kind: 'comment', uid, sessionId: command.sessionId, tabId: tab.id, url: postUrl, expiry: Date.now() + 180_000 };
     await chrome.storage.session.set({ draft });
@@ -104,8 +108,20 @@ async function executeComment(config, command, uid, deadline) {
     if (facebookIdentity(page?.url) !== identity || await observedUid() !== uid) return { outcome: 'blocked' };
     draft.url = page.url;
     await chrome.storage.session.set({ draft });
-    const view = await run({ tabId: tab.id }, 'prepare');
-    if (!view?.documentId || !view.result?.ok || await observedUid() !== uid) return { outcome: 'blocked' };
+    const target = { tabId: tab.id };
+    if (reel) {
+      const [opened] = await chrome.scripting.executeScript({ target, func: openReelComments, args: [postUrl, deadline] });
+      if (!opened?.result || !opened.documentId || await observedUid() !== uid) {
+        await chrome.storage.session.set({ commentPrepareError: 'Không mở được khung bình luận đúng Reel.' });
+        return { outcome: 'blocked' };
+      }
+      target.documentIds = [opened.documentId];
+    }
+    const view = await run(target, 'prepare');
+    if (!view?.documentId || !view.result?.ok || await observedUid() !== uid) {
+      await chrome.storage.session.set({ commentPrepareError: view?.result?.problem ?? 'Không xác nhận được tài liệu hoặc tài khoản.' });
+      return { outcome: 'blocked' };
+    }
     await chrome.storage.session.set({ draft: { ...draft, documentId: view.documentId } });
     return { outcome: 'prepared' };
   }

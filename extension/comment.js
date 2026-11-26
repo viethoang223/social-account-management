@@ -5,7 +5,7 @@ export async function commentComposer(action, input) {
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const normal = value => value.replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').normalize('NFC').trim();
   const visible = element => Boolean(element.getClientRects().length && !element.closest('[aria-hidden="true"]'));
-  const label = (element, pattern) => ['aria-label', 'title', 'data-placeholder'].some(key => pattern.test(element.getAttribute(key) ?? ''));
+  const label = (element, pattern) => ['aria-label', 'aria-placeholder', 'title', 'data-placeholder'].some(key => pattern.test(element.getAttribute(key) ?? ''));
   const article = 'article,[role="article"]';
   const commentLabel = /^(?:bình luận|phản hồi|đáp lại|comment|repl(?:y|ied))\b/i;
   const isComment = element => commentLabel.test(element.getAttribute('aria-label') ?? '');
@@ -24,6 +24,8 @@ export async function commentComposer(action, input) {
   };
   const dest = new URL(postUrl);
   const destId = isPost(dest);
+  const reel = dest.pathname.startsWith('/reel/');
+  const reelView = reel ? globalThis.__seedingReelComments : null;
   const rootId = digits(dest.searchParams.get('comment_id'));
   const replyId = digits(dest.searchParams.get('reply_comment_id'));
   const here = () => active() && dest.origin === location.origin && destId && destId === isPost(new URL(location.href));
@@ -39,6 +41,7 @@ export async function commentComposer(action, input) {
   const one = items => items.length === 1 ? items[0] : null;
   const editors = scope => matches(scope, '[role="textbox"][contenteditable="true"]', () => true);
   const postScope = () => {
+    if (reel) return reelView?.path === location.pathname.replace(/\/+$/, '') && reelView.panel.isConnected ? reelView.panel : null;
     const dialogues = matches(document, '[role="dialog"]', dialog => editors(dialog).length > 0);
     if (dialogues.length) return one(dialogues);
     return one(matches(document, 'main,[role="main"]', () => true));
@@ -54,6 +57,7 @@ export async function commentComposer(action, input) {
   const rootComposer = (scope, editor) => {
     const card = editor.closest(article);
     if (card && isComment(card)) return false;
+    if (scope === reelView?.panel) return !card || !scope.contains(card);
     const linked = card ? linkedPostIds(card, card) : linkedPostIds(scope);
     if (linked.length) return linked.length === 1 && linked[0] === destId;
     const canonical = document.querySelector('link[rel="canonical"],meta[property="og:url"]')?.getAttribute('href')
@@ -63,6 +67,7 @@ export async function commentComposer(action, input) {
     return url.origin === dest.origin && isPost(url) === destId;
   };
   const editorName = /^(?:(?:write|leave) (?:a |an |your )?(?:comment|reply)|viết (?:bình luận|phản hồi|câu trả lời)|trả lời|reply to)(?:[\s.…]|$)/i;
+  const reelEditorName = /^(?:Bình luận dưới tên|Comment as)\s+\S/i;
   const replyName = /^(?:phản hồi|trả lời|reply)$/i;
   const sendName = /^(?:gửi bình luận|đăng bình luận|gửi phản hồi|đăng phản hồi|bình luận|comment|send comment|post comment|send reply|post reply)$/i;
   const controls = 'button,[role="button"],input[type="submit"]';
@@ -81,6 +86,12 @@ export async function commentComposer(action, input) {
   const parentCard = scope => one(commentCards(scope).filter(card =>
     links(card).some(link => link.id === parentId && link.root === rootId)));
   const sendButton = (editor, scope) => {
+    const form = reel && editor.closest('form');
+    if (form && scope.contains(form)) {
+      if (editors(form).length !== 1 || form.querySelector(article)) return null;
+      const send = one(matches(form, controls, btn => label(btn, sendName) || sendName.test(normal(btn.innerText ?? ''))));
+      return send && !send.matches(':disabled,[aria-disabled="true"]') ? send : null;
+    }
     for (let area = editor.parentElement, level = 0; area && scope.contains(area) && level < 6; area = area.parentElement, level++) {
       if (editors(area).length !== 1 || area.querySelector(article)) return null;
       const buttons = matches(area, controls, btn => label(btn, sendName) || sendName.test(normal(btn.innerText ?? '')));
@@ -99,7 +110,7 @@ export async function commentComposer(action, input) {
   };
   if (action === 'prepare') {
     const scope = await waitFor(postScope);
-    if (!scope) return null;
+    if (!scope) return { problem: 'Không tìm thấy khung bình luận đã mở.' };
     const originalEditors = editors(scope);
     let parent = null;
     if (parentId) {
@@ -109,15 +120,30 @@ export async function commentComposer(action, input) {
       reply.click();
     }
     const editor = await waitFor(() => one(editors(scope).filter(item => {
-      if (!label(item, editorName)) return false;
+      if (!parentId && scope === reelView?.panel) return rootComposer(scope, item);
+      if (!label(item, editorName) && !(reel && label(item, reelEditorName))) return false;
       if (parentId) return !originalEditors.includes(item);
       return rootComposer(scope, item);
     })));
-    if (!editor || normal(editor.innerText) || !here()) return null;
+    if (!editor) return { problem: 'Không xác định được duy nhất ô bình luận trong khung.' };
+    if (normal(editor.innerText) || !here()) return { problem: 'Ô bình luận không trống hoặc Reel đã thay đổi.' };
     editor.focus();
-    if (!document.execCommand('insertText', false, text)) return null;
+    if (reel) {
+      const selection = window.getSelection();
+      if (!selection) return { problem: 'Chrome chưa đặt được con trỏ trong ô bình luận.' };
+      const cursor = document.createRange();
+      cursor.selectNodeContents(editor);
+      cursor.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(cursor);
+      if (!editor.contains(selection.anchorNode)) return { problem: 'Con trỏ chưa ở trong đúng ô bình luận.' };
+    }
+    if (!document.execCommand('insertText', false, text)) return { problem: 'Chrome không cho nhập vào ô bình luận.' };
     globalThis.__seedingComment = { postUrl, parentId, uid, editor, scope, parent };
-    return await waitFor(verify) ? { ok: true } : null;
+    if (await waitFor(verify)) return { ok: true };
+    return { problem: normal(editor.innerText) === normal(text)
+      ? 'Đã nhập nội dung, nhưng chưa xác nhận được nút gửi.'
+      : 'Nội dung ô bình luận sau khi nhập không khớp.' };
   }
   const send = verify();
   if (!send || !here()) return null;

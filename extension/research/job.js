@@ -1,4 +1,5 @@
 import { facebookIdentity } from '../facebook-url.js';
+import { openReelComments } from '../reel-comments.js';
 import { readResearch } from './reader.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -65,8 +66,14 @@ export async function scanResearch(command, deadline, sameUid) {
       await delay(250);
     }
     if (!await sameUid()) return null;
+    const target = { tabId: tab.id };
+    if (new URL(url).pathname.startsWith('/reel/')) {
+      const [opened] = await chrome.scripting.executeScript({ target, func: openReelComments, args: [url, deadline] });
+      if (!opened?.result || !opened.documentId || !await sameUid()) return null;
+      target.documentIds = [opened.documentId];
+    }
     const [read] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, func: readResearch,
+      target, func: readResearch,
       args: [kind === 'RESEARCH_POST' ? 'post' : 'profile', url, limit, deadline],
     });
     if (Date.now() >= deadline || facebookIdentity(read?.result?.url) !== identity || !await sameUid()) return null;

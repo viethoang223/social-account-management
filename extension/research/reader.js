@@ -53,8 +53,11 @@ export async function readResearch(mode, requested, limit, deadline) {
       captionPartial: blocks.length > 1 || /(?:…|\.{3}|xem thêm|see more)$/i.test(body),
     };
   };
+  const path = new URL(requested).pathname.replace(/\/+$/, '');
+  const reel = mode === 'post' && path.startsWith('/reel/');
+  const reelView = reel ? globalThis.__seedingReelComments : null;
   const main = document.querySelector('main,[role="main"]');
-  if (!allowed() || !main) return null;
+  if (!allowed() || (reel ? reelView?.path !== path || !reelView.panel.isConnected : !main)) return null;
   if (mode === 'profile') {
     const rows = new Map();
     let still = 0;
@@ -81,12 +84,12 @@ export async function readResearch(mode, requested, limit, deadline) {
   const targetId = post(requested)?.id;
   if (!targetId || post(location.href)?.id !== targetId) return null;
   const single = items => items.length === 1 ? items[0] : null;
-  const initial = single(all(document, '[role="dialog"]').filter(dialog => own(dialog, message).length > 0)) ?? main;
-  const cards = all(initial, article).filter(card => !isComment(card) && own(card, message).length);
+  const initial = reelView?.panel ?? (single(all(document, '[role="dialog"]').filter(dialog => own(dialog, message).length > 0)) ?? main);
+  const cards = reel ? [] : all(initial, article).filter(card => !isComment(card) && own(card, message).length);
   const matchesPost = card => own(card, 'a[href]').some(anchor => anchor.closest(article) === card && post(anchor.href)?.id === targetId);
   const primary = single(cards.filter(matchesPost)) ?? single(cards);
-  const content = primary ?? initial;
-  if (!primary && own(content, message).length > 1) return null;
+  const content = reelView?.content ?? primary ?? initial;
+  if (!reel && !primary && own(content, message).length > 1) return null;
   const bodyNode = () => single(own(content, message));
   const moreCaption = bodyNode() && single(named(bodyNode(), control, expandText));
   if (moreCaption && allowed()) {
@@ -114,7 +117,8 @@ export async function readResearch(mode, requested, limit, deadline) {
         if (!root && !reply) return [];
         url.searchParams.delete('comment_id');
         url.searchParams.delete('reply_comment_id');
-        return [{ root, reply, postId: post(url.href)?.id }];
+        const linkedPost = post(url.href);
+        return linkedPost ? [{ root, reply, postId: linkedPost.id }] : [];
       }).at(0);
       if (direct && direct.postId !== targetId) continue;
       if (!direct && !primary?.contains(card) && initial === main) { truncated = true; continue; }
@@ -154,8 +158,7 @@ export async function readResearch(mode, requested, limit, deadline) {
   if (!allowed() || post(location.href)?.id !== targetId) return null;
   const author = own(content, heading).find(anchor => person(anchor.href) && text(anchor));
   const video = own(content, 'video')[0];
-  const path = new URL(requested).pathname;
-  const sourceKind = /\/reel\//.test(path) ? 'reel' : /\/(?:watch|videos)(?:\/|$)/.test(path) || video ? 'video' : 'post';
+  const sourceKind = reel ? 'reel' : /\/(?:watch|videos)(?:\/|$)/.test(path) || video ? 'video' : 'post';
   const images = own(content, 'img').filter(img => img.naturalWidth >= 200
     && (img.closest('a[href*="fbid="]') || img.closest('[data-ad-preview="media"],[data-ad-comet-preview="media"]'))).map(img => img.currentSrc || img.src);
   const gallery = own(content, 'a[href*="set=pcb"]').at(0)?.href;
