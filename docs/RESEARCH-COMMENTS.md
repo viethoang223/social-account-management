@@ -16,6 +16,8 @@ Một bản cài **SeedingSys Profile Connector 1.2.0** trên mỗi Chrome profi
 4. Chọn **Nguồn trong Kho bài viết**, xác nhận quyền sử dụng một lần rồi bấm **Lưu lô vào Kho bài viết**. SeedingSys lưu ngay những bài đã đọc đủ và tự lưu các bài tiếp theo khi đọc xong. Khi nhập video, máy chạy worker-media dùng FFmpeg để chuẩn bị MP4 H.264/AAC theo cách của FB Desk. Cài FFmpeg trên máy đó hoặc đặt `MEDIA_FFMPEG_PATH` trỏ tới tệp thực thi. Kiểm tra trạng thái media trong kho và khả năng đăng media của đích trước khi lên lịch.
 5. Khi bài đã có link Facebook, dùng **Phân vai & Radar** để duyệt quan hệ và cách xưng hô theo từng cặp UID, rồi soạn và duyệt bình luận trong **Kho bài viết**.
 
+Máy chạy worker-media có thể dùng yt-dlp để tìm bản hình có độ phân giải cao hơn trên Reel Instagram công khai. Cài yt-dlp trên PATH hoặc đặt `MEDIA_YTDLP_PATH` trong môi trường của worker, rồi khởi động lại worker-media. Khi có bản phù hợp, Media Bridge ghép hình đó với tiếng từ MP4 của cùng Reel. Nó kiểm tra kích thước, tỷ lệ khung hình, thời lượng và giới hạn 120 MiB. Nếu chỉ có MP4 ban đầu phù hợp, worker vẫn lưu tệp đó. Cấu hình áp dụng khi tải media mới.
+
 ## Duyệt và gửi bình luận
 
 1. Trong **Phân vai & Radar**, duyệt cách xưng hô theo đúng chiều. Với bình luận gốc, người nghe là chủ bài đích. Với phản hồi, người nghe là UID đã được duyệt để gửi bình luận cha.
