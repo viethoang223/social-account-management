@@ -26,7 +26,7 @@ const author = '123456789';
 const sender = '223456789';
 const message = 'Bình luận kiểm thử';
 
-it.skipIf(!executablePath).each([false, true])('selects Public in Reel settings and rechecks it before sending (separate label: %s)', async separate => {
+it.skipIf(!executablePath).each([[false, false], [true, false], [true, true]])('selects Public in Reel settings and rechecks it before sending (separate label: %s, hidden after selection: %s)', async (separate, hiddenAfterSelection) => {
   const file = Buffer.from('sample Reel');
   const media = { format: 'REEL', mime: 'video/mp4', size: file.length, checksum: createHash('sha256').update(file).digest('hex') };
   const audience = separate
@@ -48,7 +48,7 @@ it.skipIf(!executablePath).each([false, true])('selects Public in Reel settings 
       el('audience').onclick = () => el('picker').hidden = false;
       el('public').onclick = () => el('public').setAttribute('aria-checked','true');
       el('done').onclick = () => {
-        if (el('public').getAttribute('aria-checked') === 'true') el('current').textContent = 'Public';
+        if (el('public').getAttribute('aria-checked') === 'true') el('current').textContent = ${hiddenAfterSelection ? "''" : "'Public'"};
         el('picker').hidden = true;
       };
       el('share').onclick = () => document.body.dataset.shared = 'yes';
@@ -57,14 +57,49 @@ it.skipIf(!executablePath).each([false, true])('selects Public in Reel settings 
     const deadline = Date.now() + 15_000;
     expect(await invoke(page, composer, 'stage-media', '', deadline, 'PUBLIC', media, 'reel-1',
       { offset: 0, data: file.toString('base64') })).toBe(true);
-    expect(await invoke(page, composer, 'prepare', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(true);
-    expect(await page.locator('#current').innerText()).toBe('Public');
+    expect(await invoke(page, composer, 'prepare', caption, deadline, 'PUBLIC', media, 'reel-1', null, hiddenAfterSelection)).toBe(true);
+    expect(await page.locator('#current').innerText()).toBe(hiddenAfterSelection ? '' : 'Public');
     await page.locator('#current').evaluate(el => el.textContent = 'Friends');
     expect(await invoke(page, composer, 'commit', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(false);
     expect(await page.locator('body').getAttribute('data-shared')).toBeNull();
     await page.locator('#current').evaluate(el => el.textContent = 'Public');
     expect(await invoke(page, composer, 'commit', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(true);
     expect(await page.locator('body').getAttribute('data-shared')).toBe('yes');
+  });
+});
+
+it.skipIf(!executablePath)('uses the Reel default only for unreadable public audience and reports the one click', async () => {
+  const file = Buffer.from('sample Reel');
+  const media = { format: 'REEL', mime: 'video/mp4', size: file.length, checksum: createHash('sha256').update(file).digest('hex') };
+  await withPage('https://www.facebook.com/profile.php?id=123456789', `<!doctype html>
+    <button id="open">Create reel</button>
+    <div id="draft" role="dialog" hidden><h2>Reel settings</h2>
+      <textarea></textarea><input type="file" accept="video/*"><video width="80" height="80" hidden></video>
+      <div><span>Who can see this reel?</span><span id="value"></span></div>
+      <button id="share">Share reel</button></div>
+    <script>
+      document.getElementById('open').onclick = () => document.getElementById('draft').hidden = false;
+      document.querySelector('input').onchange = () => document.querySelector('video').hidden = false;
+      document.getElementById('share').onclick = () => document.body.dataset.clicks = String(Number(document.body.dataset.clicks || 0) + 1);
+    </script>`, async page => {
+    const caption = 'Caption gốc';
+    const deadline = Date.now() + 15_000;
+    const commit = (enabled: boolean, audience = 'PUBLIC', text = caption) =>
+      invoke(page, composer, 'commit', text, deadline, audience, media, 'reel-default', null, enabled);
+    expect(await invoke(page, composer, 'stage-media', '', deadline, 'PUBLIC', media, 'reel-default',
+      { offset: 0, data: file.toString('base64') })).toBe(true);
+    expect(await invoke(page, composer, 'prepare', caption, deadline, 'PUBLIC', media, 'reel-default', null, true)).toBe(true);
+    expect(await commit(false)).toBe(false);
+    expect(await commit(true, 'ONLY_ME')).toBe(false);
+    expect(await commit(true, 'PUBLIC', 'Wrong caption')).toBe(false);
+    for (const value of ['Friends', 'Chỉ mình tôi', 'Custom']) {
+      await page.locator('#value').evaluate((el, value) => el.textContent = value, value);
+      expect(await commit(true)).toBe(false);
+    }
+    expect(await page.locator('body').getAttribute('data-clicks')).toBeNull();
+    await page.locator('#value').evaluate(el => el.textContent = '');
+    expect(await commit(true)).toBe('AUDIENCE_UNVERIFIED');
+    expect(await page.locator('body').getAttribute('data-clicks')).toBe('1');
   });
 });
 

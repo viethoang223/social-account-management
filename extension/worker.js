@@ -30,10 +30,11 @@ async function api(config, message) {
   return result;
 }
 
-async function runComposer(target, action, caption, deadline, audience, media, sessionId, part) {
+async function runComposer(target, action, caption, deadline, audience, media, sessionId, part, allowUnverifiedAudience = false) {
   if (deadline <= Date.now()) return null;
-  const args = [action, caption, deadline, audience, media ?? null, sessionId ?? null, part ?? null];
+  const args = [action, caption, deadline, audience, media ?? null, sessionId ?? null, part ?? null, allowUnverifiedAudience];
   const [value] = await chrome.scripting.executeScript({ target, func: composer, args });
+  if (action === 'commit') return value?.result;
   return value?.result ? value.documentId : null;
 }
 
@@ -170,11 +171,11 @@ async function execute(config, command, uid, deadline) {
         return { outcome: 'blocked', issue: 'Chưa chuyển đủ tệp từ Kho bài viết vào tab đăng.' };
       }
     }
-    const documentId = await runComposer(target, 'prepare', command.caption, deadline, audience, command.media, command.sessionId);
+    const documentId = await runComposer(target, 'prepare', command.caption, deadline, audience, command.media, command.sessionId, null, command.allowUnverifiedAudience);
     if (!await sameUid()) return 'blocked';
     if (!documentId) {
       const [details] = await chrome.scripting.executeScript({ target, func: composer,
-        args: ['diagnose', command.caption, deadline, audience, command.media ?? null, command.sessionId] });
+        args: ['diagnose', command.caption, deadline, audience, command.media ?? null, command.sessionId, null, !!command.allowUnverifiedAudience] });
       return { outcome: 'blocked', ...(typeof details?.result === 'string' && { issue: details.result }) };
     }
     await chrome.storage.session.set({ draft: { ...draft, documentId, before, creatorBefore } });
@@ -186,9 +187,9 @@ async function execute(config, command, uid, deadline) {
     return { outcome: 'blocked', issue: 'Phiên bản nháp hoặc danh sách tệp đã thay đổi trước khi gửi.' };
   }
   const tabTarget = { tabId: draft.tabId, documentIds: [draft.documentId] };
-  if (!await runComposer(tabTarget, 'inspect', command.caption, deadline, audience, command.media, command.sessionId).catch(() => null)) {
+  if (!await runComposer(tabTarget, 'inspect', command.caption, deadline, audience, command.media, command.sessionId, null, command.allowUnverifiedAudience).catch(() => null)) {
     const [details] = await chrome.scripting.executeScript({ target: tabTarget, func: composer,
-      args: ['diagnose', command.caption, deadline, audience, command.media ?? null, command.sessionId] }).catch(() => []);
+      args: ['diagnose', command.caption, deadline, audience, command.media ?? null, command.sessionId, null, !!command.allowUnverifiedAudience] }).catch(() => []);
     return { outcome: 'blocked', issue: typeof details?.result === 'string' ? details.result : 'Tài liệu Chrome chứa bản nháp không còn mở.' };
   }
   const requestedAt = Date.now();
@@ -197,19 +198,22 @@ async function execute(config, command, uid, deadline) {
   // Retain ownership until Facebook has finished, but never use this draft to click again.
   await chrome.storage.session.set({ draft: { ...draft, submitting: true } });
   const clickDeadline = Math.min(deadline, requestedAt + permit.lifetimeMs);
-  if (!await runComposer(tabTarget, 'commit', command.caption, clickDeadline, audience, command.media, command.sessionId)) return 'blocked';
+  const clicked = await runComposer(tabTarget, 'commit', command.caption, clickDeadline, audience, command.media, command.sessionId,
+    null, command.allowUnverifiedAudience === true && permit.allowUnverifiedAudience === true);
+  if (!clicked) return 'blocked';
+  const submitted = { outcome: 'clicked', ...(clicked === 'AUDIENCE_UNVERIFIED' && { audienceUnverified: true }) };
   if (command.media) {
     let finished = false;
     while (Date.now() < deadline - 23_000 && await sameUid()) {
       const permalink = await publicationTabState(draft, 'receipt');
       const id = facebookIdentity(permalink);
-      if (id?.startsWith('post:') && await sameUid()) return { outcome: 'clicked', receipt: { externalId: id.slice(5), permalink } };
+      if (id?.startsWith('post:') && await sameUid()) return { ...submitted, receipt: { externalId: id.slice(5), permalink } };
       finished = await publicationTabState(draft) === 'finished';
       if (finished) break;
       await new Promise(resolve => setTimeout(resolve, 650));
     }
     // Switching away while the composer is still uploading can interrupt the post.
-    if (!finished) return 'clicked';
+    if (!finished) return submitted;
   }
   if (draft.before?.creatorLibrary && draft.creatorBefore?.length) {
     const seen = new Set(draft.creatorBefore.map(post => post.id));
@@ -223,17 +227,17 @@ async function execute(config, command, uid, deadline) {
       const permalink = facebook + '/permalink.php?story_fbid=' + id + '&id=' + uid;
       const verified = await readOnCreatorTab(permalink, Math.min(deadline - 2_000, Date.now() + 9_000), sameUid,
         confirmCreatorPublicPost, [uid, id, command.caption]).catch(() => null);
-      if (verified && await sameUid()) return { outcome: 'clicked', receipt: { externalId: id, permalink }, verification: 'reopened-post' };
+      if (verified && await sameUid()) return { ...submitted, receipt: { externalId: id, permalink }, verification: 'reopened-post' };
     }
   }
   if (draft.before) {
     for (let attempt = 0; attempt < 2 && Date.now() < deadline - 6_000 && await sameUid(); attempt++) {
       const after = await readPublicationTimeline(uid, Math.min(deadline - 2_000, Date.now() + 18_000), sameUid, command.media ? command.caption : null).catch(() => null);
       const receipt = findPublishedText(uid, command.caption, draft.before, after, Boolean(command.media));
-      if (receipt && await sameUid()) return { outcome: 'clicked', receipt, verification: 'reopened-post' };
+      if (receipt && await sameUid()) return { ...submitted, receipt, verification: 'reopened-post' };
     }
   }
-  return 'clicked';
+  return submitted;
 }
 
 async function executeComment(config, command, uid, deadline) {

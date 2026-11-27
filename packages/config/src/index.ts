@@ -38,6 +38,7 @@ export const EnvSchema = z.object({
   BROWSER_MAX_SESSIONS: z.coerce.number().int().positive().default(4),
   COLLECTOR_CONCURRENCY: z.coerce.number().int().positive().default(2),
   PUBLISHER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  REEL_ALLOW_UNVERIFIED_AUDIENCE: bool.default(false),
   VIDEO_CONCURRENCY: z.coerce.number().int().positive().default(1),
 
   // API

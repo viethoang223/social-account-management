@@ -12,7 +12,8 @@ import {
 import { facebookCommentId, facebookPostId, facebookPostLink, facebookUrl, type Clock } from '@seedingsys/domain';
 import { ProfileToken, Roles, type Principal } from './auth';
 import type { ObjectStore } from '@seedingsys/storage';
-import { CLOCK, DB, STORE } from './tokens';
+import type { AppConfig } from '@seedingsys/config';
+import { CLOCK, CONFIG, DB, STORE } from './tokens';
 import { Actor, parse } from './util';
 import { RadarImport } from './persona-radar';
 import { claimRadarScan, finishRadarScan } from './radar-dispatch';
@@ -33,6 +34,7 @@ const request = z.discriminatedUnion('action', [
   z.object({ ...profile, action: z.literal('read-publish-media'), commandId: z.string().uuid(),
     offset: z.number().int().min(0).max(EXTENSION_MEDIA_LIMIT - 1), fileIndex: z.number().int().min(0).max(EXTENSION_MEDIA_FILE_LIMIT - 1).optional() }),
   z.object({ ...profile, action: z.literal('complete'), commandId: z.string().uuid(), outcome: z.enum(['prepared', 'clicked', 'blocked']),
+    audienceUnverified: z.literal(true).optional(),
     issue: z.string().trim().max(240).optional(), verification: z.literal('reopened-post').optional(),
     receipt: z.object({ externalId: z.string().regex(/^[\w:-]{1,150}$/), permalink: z.string().max(2000).url() }).optional() }),
   z.object({ ...profile, action: z.literal('radar-complete'), commandId: z.string().uuid(), report: RadarImport.nullable() }),
@@ -135,7 +137,8 @@ async function commentCommandIsCurrent(t: Tx, command: ExtensionCommand, now: Da
 @Controller()
 export class ExtensionController {
   constructor(@Inject(DB) private readonly db: Db, @Inject(CLOCK) private readonly clock: Clock,
-    @Optional() @Inject(STORE) private readonly store?: ObjectStore) {}
+    @Optional() @Inject(STORE) private readonly store?: ObjectStore,
+    @Optional() @Inject(CONFIG) private readonly config?: Pick<AppConfig, 'REEL_ALLOW_UNVERIFIED_AUDIENCE'>) {}
 
   @Post('targets/extension/import')
   @Roles('admin')
@@ -323,10 +326,11 @@ export class ExtensionController {
         }
         await t.extensionCommand.update({ where: { id: command.id }, data: { claimedAt: now } });
         const { objectKeys: _objectKeys, ...payload } = current as typeof current & { objectKeys?: string[] };
+        const allowUnverifiedAudience = this.config?.REEL_ALLOW_UNVERIFIED_AUDIENCE && current.media?.format === 'REEL' && current.audience === 'PUBLIC';
         return {
           code: target.code, state: 'CONNECTED', ...tracked,
           command: { id: command.id, action: command.action, sessionId: command.sessionId, caption: command.caption, comment: command.comment,
-            ...payload, lifetimeMs: command.expiresAt.getTime() - now.getTime() },
+            ...payload, ...(allowUnverifiedAudience && { allowUnverifiedAudience: true }), lifetimeMs: command.expiresAt.getTime() - now.getTime() },
         };
       }
       if (!binding.installationId) throw new UnauthorizedException('Profile chưa kết nối.');
@@ -368,12 +372,15 @@ export class ExtensionController {
         return { offset: input.offset, ...(input.fileIndex !== undefined && { fileIndex: input.fileIndex }), data: bytes.toString('base64') };
       }
       if (input.action === 'authorize') {
-        if (input.uid !== binding.uid || !target.enabled || !['commit', 'comment-commit'].includes(command.action) || command.authorizedAt || command.result
-          || !await commandIsCurrent(t, command, now)) {
+        const current = input.uid === binding.uid && target.enabled && ['commit', 'comment-commit'].includes(command.action)
+          && !command.authorizedAt && !command.result ? await commandIsCurrent(t, command, now) : null;
+        if (!current) {
           throw new ConflictException('Lệnh đăng không còn được phép thực thi.');
         }
         await t.extensionCommand.update({ where: { id: command.id }, data: { authorizedAt: now } });
-        return { lifetimeMs: Math.min(5_000, command.expiresAt.getTime() - now.getTime()) };
+        return { lifetimeMs: Math.min(5_000, command.expiresAt.getTime() - now.getTime()),
+          ...(this.config?.REEL_ALLOW_UNVERIFIED_AUDIENCE && current.media?.format === 'REEL' && current.audience === 'PUBLIC'
+            && { allowUnverifiedAudience: true }) };
       }
       if ((input.outcome === 'prepared' && (!['prepare', 'comment-prepare'].includes(command.action) || input.uid !== binding.uid))
         || (input.outcome === 'clicked' && (!['commit', 'comment-commit'].includes(command.action) || !command.authorizedAt || input.uid !== binding.uid))
@@ -385,9 +392,18 @@ export class ExtensionController {
       if (command.action === 'commit' && input.receipt && facebookPostLink(input.receipt.permalink)?.id !== input.receipt.externalId) {
         throw new ConflictException('Liên kết không trỏ đến bài vừa đăng.');
       }
+      if (input.audienceUnverified && !command.result) {
+        const reel = command.action === 'commit' && input.outcome === 'clicked' && await t.publication.findFirst({
+          where: { id: command.publicationId, targetId: target.id, contentType: 'REEL',
+            variant: { snapshot: { path: ['audience'], equals: 'PUBLIC' } } }, select: { id: true },
+        });
+        if (!reel) throw new ConflictException('Trạng thái đối tượng xem chỉ áp dụng cho Reel đã gửi.');
+        await audit(t, { entityType: 'publication', entityId: reel.id, action: 'reel_audience_unverified', actor: 'extension', at: now,
+          data: { commandId: command.id, reason: 'Đã gửi Reel theo mặc định của tài khoản. Chưa xác minh Công khai.' } });
+      }
       if (!command.result) await t.extensionCommand.update({ where: { id: command.id }, data: {
         result: { outcome: input.outcome, ...(input.receipt && { receipt: input.receipt }), ...(input.issue && { issue: input.issue }),
-          ...(input.verification && { verification: input.verification }) },
+          ...(input.verification && { verification: input.verification }), ...(input.audienceUnverified && { audienceUnverified: true }) },
       } });
       return { ok: true };
     });

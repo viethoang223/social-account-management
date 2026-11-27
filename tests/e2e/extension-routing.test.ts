@@ -4,7 +4,7 @@ import { ExtensionController } from '../../apps/api/src/extension.controller';
 import { ConfigController } from '../../apps/api/src/config.controller';
 import { ExtensionPublishConnector } from '../../apps/worker-browser/src/runtime/extension';
 import { handlePublish, handleReconcile } from '../../apps/worker-browser/src';
-import { dispatchBacklogItem, setControl } from '@seedingsys/db';
+import { accountResource, acquireLease, dispatchBacklogItem, setControl } from '@seedingsys/db';
 import { EXTENSION_CONNECTOR } from '@seedingsys/contracts';
 import { createHarness, cycle, MIN, type Harness } from '../helpers/harness';
 
@@ -40,8 +40,8 @@ it('imports unique UIDs as disabled targets and preserves existing accounts', as
   expect(await h.db.targetAccount.count({ where: { enabled: true, connector: 'fake' } })).toBe(2);
 });
 
-async function setup() {
-  const controller = new ExtensionController(h.db, h.clock);
+async function setup(allowUnverifiedReelAudience = false) {
+  const controller = new ExtensionController(h.db, h.clock, h.browser.store, { REEL_ALLOW_UNVERIFIED_AUDIENCE: allowUnverifiedReelAudience });
   h.browser.registry.addPublisher(new ExtensionPublishConnector(h.db, h.clock));
   await h.db.targetAccount.update({ where: { id: h.ids.targets.B1 }, data: { connector: EXTENSION_CONNECTOR, externalId: uid1 } });
   await h.db.targetAccount.update({ where: { id: h.ids.targets.B2 }, data: { connector: EXTENSION_CONNECTOR, externalId: uid2 } });
@@ -136,7 +136,7 @@ it('pins two accounts, rejects switched profiles, and keeps each command in its 
 });
 
 it('routes a public draft only to the updated profile and verifies the one posted link', async () => {
-  const { call1 } = await setup();
+  const { call1 } = await setup(true);
   const targets = new ConfigController(h.db, h.clock);
   await expect(targets.updateTarget(h.ids.targets.B1, { audience: 'PUBLIC' }, admin)).resolves.toMatchObject({ audience: 'PUBLIC' });
   const { first } = await readyPosts();
@@ -157,7 +157,8 @@ it('routes a public draft only to the updated profile and verifies the one poste
   const prepare = await next('prepare');
   await call1({ action: 'complete', commandId: prepare, outcome: 'prepared' });
   const commit = await next('commit');
-  await expect(call1({ action: 'authorize', commandId: commit })).resolves.toMatchObject({ lifetimeMs: 5000 });
+  await expect(call1({ action: 'authorize', commandId: commit })).resolves.toEqual({ lifetimeMs: 5000 });
+  await expect(call1({ action: 'complete', commandId: commit, outcome: 'clicked', audienceUnverified: true })).rejects.toMatchObject({ status: 409 });
   await expect(call1({ action: 'authorize', commandId: commit })).rejects.toMatchObject({ status: 409 });
   const permalink = 'https://www.facebook.com/' + uid1 + '/posts/253';
   await expect(call1({ action: 'complete', commandId: commit, outcome: 'clicked',
@@ -167,5 +168,34 @@ it('routes a public draft only to the updated profile and verifies the one poste
   await expect(publish).resolves.toBe('PUBLISHED_VERIFIED');
   await expect(h.db.publication.findUnique({ where: { id: publicationId } })).resolves.toMatchObject({
     status: 'PUBLISHED_VERIFIED', externalPostId: '253', permalink,
+  });
+});
+
+it('grants the public Reel exception and records an unverified audience exactly once', async () => {
+  const { call1 } = await setup(true);
+  const targetId = h.ids.targets.B1;
+  await new ConfigController(h.db, h.clock).updateTarget(targetId, { audience: 'PUBLIC' }, admin);
+  const { first } = await readyPosts();
+  const poll = () => call1({ action: 'poll', publishProtocol: 2, publishMediaProtocol: 2 });
+  await poll();
+  const publicationId = await dispatchBacklogItem(h.core, first.id);
+  const asset = { kind: 'video', mime: 'video/mp4', checksum: 'd'.repeat(64), objectKey: 'test/reel.mp4' };
+  const { id: assetId } = await h.db.asset.create({ data: { ...asset, connector: 'fake', bytes: 48, status: 'STORED' } });
+  const caption = 'Caption Reel';
+  await h.db.contentVariant.update({ where: { id: first.id }, data: { contentType: 'REEL',
+    snapshot: { targetId, audience: 'PUBLIC', contentType: 'REEL', caption, media: [{ ...asset, assetId, position: 0 }] } } });
+  await h.db.publication.update({ where: { id: publicationId }, data: { contentType: 'REEL', status: 'COMMITTING' } });
+  const lease = await acquireLease(h.db, { resource: accountResource(targetId), holder: 'test', now: h.clock.now(), ttlMs: MIN });
+  if (!lease) throw new Error('Missing account lease');
+  const { id: commandId } = await h.db.extensionCommand.create({ data: { action: 'commit', targetId, publicationId,
+    caption, sessionId: randomUUID(), fencingToken: lease.token, expiresAt: lease.expiresAt } });
+  await expect(poll()).resolves.toMatchObject({ command: { id: commandId, allowUnverifiedAudience: true } });
+  await expect(call1({ action: 'authorize', commandId })).resolves.toMatchObject({ allowUnverifiedAudience: true });
+  const completed = { action: 'complete', commandId, outcome: 'clicked', audienceUnverified: true };
+  await call1(completed);
+  await call1(completed);
+  expect(await h.db.auditEvent.count({ where: { entityId: publicationId, action: 'reel_audience_unverified' } })).toBe(1);
+  await expect(h.db.extensionCommand.findUnique({ where: { id: commandId } })).resolves.toMatchObject({
+    result: { outcome: 'clicked', audienceUnverified: true },
   });
 });

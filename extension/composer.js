@@ -1,5 +1,5 @@
 /** Runs in a tab opened exclusively for this draft. Keep checks and the click in the same script. */
-export async function composer(action, caption, deadline, expectedAudience = 'ONLY_ME', media, session, part) {
+export async function composer(action, caption, deadline, expectedAudience = 'ONLY_ME', media, session, part, allowUnverifiedAudience = false) {
   if (location.origin !== 'https://www.facebook.com' || /\/(?:login|checkpoint)(?:\/|$)/.test(location.pathname)) return false;
   const staged = () => globalThis.__seedingDraftFile;
   const files = media?.files ?? (media ? [media] : []);
@@ -118,7 +118,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     const found = roots.filter(root => !roots.some(other => other !== root && root.contains(other)));
     if (found.length === 1) return found[0];
     const state = staged();
-    if (found.length || state?.session !== session || !state.review) return null;
+    if (found.length || !state?.review || state.session !== session) return null;
     if (state.review.isConnected && visible(state.review)) return state.review;
     const replacement = reviewDialog();
     if (replacement) state.review = replacement;
@@ -143,6 +143,18 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     .replace(/\.$/, ''));
   const audienceChoices = element => audienceLabels(element).filter(label => audience.test(label)
     || (reel && /^(?:Chỉ mình tôi|Công khai|Only me|Public|Bạn bè|Friends)\s/i.test(label)));
+  const privacyHeading = /^(?:Reel audience|Audience|Privacy|Who can see (?:your|this) reel\??|Đối tượng(?: của (?:thước phim|Reel))?|Quyền riêng tư|Ai có thể xem (?:thước phim|Reel)(?: này| của bạn)?\??)$/i;
+  const reelRowChoices = root => {
+    const values = [];
+    for (const label of root.querySelectorAll('span,div,label,legend,dt,h2,h3')) {
+      if (label.children.length || !visible(label) || label.closest('[contenteditable],textarea')
+        || !privacyHeading.test(normalized(label.innerText)) || label.parentElement === root) continue;
+      for (const sibling of label.parentElement.children) {
+        if (sibling !== label && visible(sibling)) values.push(...audienceChoices(sibling));
+      }
+    }
+    return values;
+  };
   const audienceControl = root => {
     const found = controls(root).filter(button => button.matches('button,[role="button"]')
       && audienceChoices(button).length > 0);
@@ -157,9 +169,15 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     return { button, choices: selected.length ? selected : audienceChoices(button) };
   };
   const audienceMatches = root => {
-    const choices = audienceControl(root)?.choices;
-    return !!choices?.length && choices.every(label => expected.test(label));
+    const choices = audienceControl(root)?.choices ?? [];
+    const selected = reel ? choices.concat(reelRowChoices(root)) : choices;
+    return selected.length > 0 && selected.every(label => expected.test(label));
   };
+  const canUseReelDefault = root => allowUnverifiedAudience === true && reel && expectedAudience === 'PUBLIC'
+    && !audienceControl(root)?.choices.length
+    && !reelRowChoices(root).length
+    && !controls(root).some(control => audienceChoices(control).some(choice => !expected.test(choice)));
+  const audienceAccepted = root => audienceMatches(root) || canUseReelDefault(root);
   const reviewDialog = () => {
     const matches = dialogs().filter(panel => /(?:post settings|review post|cài đặt bài viết|xem lại bài viết|create post|tạo bài viết)/i
       .test((panel.getAttribute('aria-label') ?? '') + ' ' + panel.innerText) && !!one(panel, submit)
@@ -273,7 +291,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     return staged()?.review === root && previewCaptionMatches(root);
   };
   const verified = root => {
-    if (!root || otherDialogs(root).length || !audienceMatches(root)) return null;
+    if (!root || otherDialogs(root).length || !audienceAccepted(root)) return null;
     if (media ? (staged()?.session !== session || !staged()?.attached || staged().checksums.length !== files.length
       || files.some((file, index) => staged().checksums[index] !== file.checksum) || !hasPreview(root)) : hasMedia(root)) return null;
     const button = one(root, submit);
@@ -285,7 +303,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     const root = rootOf();
     if (!root) return 'Không xác định được một hộp soạn bài.';
     if (otherDialogs(root).length) return 'Vẫn còn một hộp thoại khác trên bài nháp.';
-    if (!audienceMatches(root)) return 'Chưa xác nhận được đối tượng xem đã yêu cầu.';
+    if (!audienceAccepted(root)) return 'Chưa xác nhận được đối tượng xem đã yêu cầu.';
     if (!captionMatches(root)) return 'Nội dung trong ô soạn khác bản đã duyệt.';
     if (media && !hasPreview(root)) return 'Facebook chưa hiện đúng ảnh hoặc Reel trong bản xem trước.';
     return 'Không xác nhận được nút Đăng.';
@@ -314,8 +332,9 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
       globalThis.__seedingPublishReceipt = { session, links, root, previousNotices, clickedAt: Date.now() };
       setTimeout(() => observer.disconnect(), 15_000);
     }
+    const audienceUnverified = !audienceMatches(root);
     button.click();
-    return true;
+    return audienceUnverified ? 'AUDIENCE_UNVERIFIED' : true;
   }
   if (action !== 'prepare' || dialogs().length) return false;
   let open = await waitFor(() => one(document, reel ? /^(?:Tạo (?:thước phim|reel)|Create reel)$/i
@@ -358,7 +377,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     }, 8_000);
     if (!root) return false;
   }
-  if (!audienceMatches(root)) {
+  if (!audienceAccepted(root)) {
     const button = audienceControl(root)?.button;
     if (!button) {
       if (media && staged()) staged().diagnostic = 'Màn hình cài đặt chưa có một nút chọn đối tượng xác định.';
@@ -416,7 +435,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     if (save) save.click();
     root = await waitFor(() => {
       const found = rootOf();
-      return found && !otherDialogs(found).length && audienceMatches(found) && found;
+      return found && !otherDialogs(found).length && audienceAccepted(found) && found;
     }, 8000);
     if (!root) {
       if (media && staged()) staged().diagnostic = 'Facebook chưa trả lại bản nháp với đối tượng Công khai sau khi xác nhận lựa chọn.';
