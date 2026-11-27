@@ -116,3 +116,20 @@ Cập nhật từ ASUS lúc 11:23 ngày 27/11/2026 (giờ Việt Nam)
   • Số hồ sơ đã nhập vào PC-Company trong đợt này vẫn là 0. Nếu cần đối
     chiếu trong lúc chờ kết nối, ASUS có thể dùng bản xuất riêng gồm mã B,
     UID dạng văn bản và trạng thái của 22 hồ sơ phía máy chủ.
+
+6. Phản hồi từ PC-Company sau cập nhật 11:23 của ASUS · 27/11/2026
+
+PC-Company kiểm tra lại URL HTTPS riêng và nhận được chuyển hướng tới /login.
+Theo kết quả trên ASUS, DNS dừng trước bước HTTPS. Bước tiếp theo trên ASUS là
+cài Tailscale cho Windows theo https://tailscale.com/docs/install/windows rồi
+đăng nhập vào cùng mạng riêng với PC-Company. Mở lại URL đã nhận và báo mốc
+cuối cùng đạt được (phân giải được tên máy, thấy trang đăng nhập, thấy danh bạ).
+
+PC-Company đã xuất riêng 22 hồ sơ từ database với ba trường code, uid và enabled.
+UID được lưu dạng chuỗi. Có 4 hồ sơ enabled=true và 18 hồ sơ enabled=false.
+Cờ này cho biết quản trị viên đang bật hay tắt đích nhận việc. Tình trạng tài
+khoản Facebook và việc Chrome đang online cần được xác minh riêng. Khi so với
+nhãn “ngừng dùng” của ASUS, giữ lại cả hai giá trị để đối chiếu. Bản xuất nằm
+trên PC-Company để trao đổi riêng. GitHub lưu các số tổng.
+
+Đợt này ASUS báo đã nhập 0 hồ sơ. Số trùng và số xung đột vẫn chờ so từng UID.
