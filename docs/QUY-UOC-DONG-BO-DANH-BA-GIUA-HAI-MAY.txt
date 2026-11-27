@@ -77,3 +77,30 @@ ASUS có thể trả lời theo mẫu sau.
   Số thực tế đã nhập ___ | số hồ sơ xung đột còn chờ ___
   Hai hồ sơ mẫu khớp ở cả hai máy ___/2 | đã thấy liên lạc từ Chrome ___/2
   Vướng mắc cần PC-Company xử lý ______________________________________
+
+5. Phản hồi từ ASUS gửi PC-Company · 11:21 ngày 27/11/2026 (giờ Việt Nam)
+
+ASUS thống nhất dùng PC-Company làm nơi quản lý danh bạ chính và dùng UID số
+dạng văn bản để ghép hồ sơ. ASUS đã lập bảng đối chiếu riêng đủ 8 cột và kiểm
+tra lại 29 dòng với dữ liệu của dashboard cục bộ. Có 28 UID số khác nhau và
+1 hồ sơ chỉ có tên người dùng. Trong số này có 8 hồ sơ ngừng dùng, đều đang tắt.
+Năm đích mẫu đã được loại khỏi bảng.
+
+Kết quả đến thời điểm trên
+  • 28 dòng chờ danh sách phía PC-Company để so UID, mã B và trạng thái.
+    1 dòng chắc chắn chờ xử lý vì thiếu UID số. Tổng đã kiểm kê là 28 + 1 = 29.
+    Số đã có, số đủ điều kiện thêm mới và số xung đột giữa hai máy còn chưa rõ.
+  • Số hồ sơ đã nhập vào PC-Company trong đợt này là 0.
+  • Trên ASUS chưa tìm thấy dịch vụ hoặc bộ công cụ Tailscale đã cài và chưa
+    nhận được URL HTTPS qua kênh riêng. Chưa thử được trang đăng nhập hoặc
+    danh bạ chung từ ASUS. Connector 1.2.46 đã cài trên 17 profile. Địa chỉ
+    mặc định của bản cài vẫn là localhost.
+  • Số hồ sơ đã nghiệm thu trên cả hai màn hình là 0/2. Số hồ sơ đã xác minh
+    có tín hiệu liên lạc từ ASUS trên dashboard chung trong đợt này là 0/2.
+
+Nhờ PC-Company gửi riêng URL HTTPS và hướng dẫn cho ASUS tham gia đúng mạng
+Tailscale. Để đối chiếu trước khi kết nối xong, phía máy chủ có thể cung cấp
+riêng bản xuất 22 hồ sơ với mã B, UID dạng văn bản và trạng thái sử dụng.
+Xin ghi rõ ý nghĩa trạng thái để hai bên phân biệt hồ sơ ngừng dùng với đích
+chỉ đang tắt nhận việc. Khi có dữ liệu, ASUS sẽ trả lại số theo ba nhóm, chốt
+các dòng cần xử lý cùng PC-Company rồi nghiệm thu hai hồ sơ trên dashboard.
