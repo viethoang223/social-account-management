@@ -1,0 +1,79 @@
+QUY ƯỚC DÙNG CHUNG DANH BẠ TÀI KHOẢN GIỮA PC-COMPANY VÀ ASUS
+Phản hồi từ PC-Company ngày 27/11/2026 cho docs/TRAO-DOI-KET-NOI-HAI-MAY.md
+
+Hai máy cùng xem và cập nhật một danh bạ trên dashboard của PC-Company. Mỗi UID
+Facebook có một hồ sơ trung tâm. Chrome và phiên đăng nhập ở lại máy đang giữ
+chúng. Tài liệu này ghi quy ước để ASUS đối chiếu. Việc nhập dữ liệu và kiểm tra
+từ ASUS vẫn đang chờ.
+
+1. Hai máy mở danh bạ ở đâu?
+
+PC-Company giữ database chính trong giai đoạn này. Trên ASUS hoặc điện thoại,
+kết nối cùng mạng riêng Tailscale, rồi mở địa chỉ HTTPS của dashboard do quản trị
+viên gửi riêng. Hai thiết bị có thể dùng Wi-Fi khác nhau. Gõ localhost trên ASUS
+sẽ mở dịch vụ của chính ASUS. Đường HTTPS đã trả về trang đăng nhập khi thử từ
+PC-Company. Phía ASUS cần xác nhận truy cập từ máy của mình.
+
+Sau lần đối chiếu đầu tiên, mọi thay đổi tên hoặc trạng thái đều thực hiện trên
+dashboard chung. Máy còn lại tải lại trang để xem. Danh bạ localhost cũ trên ASUS
+là nguồn đối chiếu ban đầu. Hiện chưa có cơ chế tự gộp hai database hoặc nhập lại
+những chỉnh sửa trên localhost ASUS. GitHub chỉ chuyển mã nguồn và tài liệu.
+
+2. Ghép dòng theo khóa nào?
+
+Dùng UID Facebook dạng số, lưu dưới dạng văn bản để giữ nguyên từng chữ số.
+Mã B là mã trong danh bạ chung. Mã B cũ của ASUS, tên hiển thị và tên Chrome
+profile chỉ giúp tra cứu. Mã A chỉ tài khoản mẹ, mã N chỉ nguồn nội dung.
+
+Mỗi dòng ASUS được tính đúng một lần, theo thứ tự dưới đây.
+  • Chờ xử lý nếu thiếu UID, UID xuất hiện nhiều dòng trong cùng danh sách,
+    cùng mã B nhưng khác UID, hoặc hai bên ghi trạng thái trái nhau. Ghi lý do
+    vào bảng đối chiếu riêng. Giữ hồ sơ trung tâm như cũ cho đến khi làm rõ.
+  • Đã có nếu UID khớp duy nhất và không có xung đột kể trên. Giữ mã B trung
+    tâm, liên kết Chrome, trạng thái và lịch sử. Nếu mã địa phương khác, ghi
+    cặp mã vào bảng đối chiếu để người dùng ASUS còn tra được.
+  • Thêm mới nếu UID hợp lệ, chưa có trên máy chủ và không xung đột. Sau khi
+    chốt danh sách, quản trị viên dùng “Nhập danh sách UID” trên dashboard chung.
+    Chức năng này bỏ qua UID đã có, cấp mã B còn trống và tạo hồ sơ ở trạng thái
+    tắt. Ghi lại mã B được cấp. Nếu hai bên cùng ghi hồ sơ đã ngừng dùng, giữ tắt.
+
+Hồ sơ chỉ có tên người dùng được giữ trong bảng chờ riêng trên ASUS đến khi
+xác minh được UID. Khi đưa một hồ sơ sang thiết bị khác, giữ mã B và lịch sử
+trung tâm, ghi lại máy giữ Chrome mới và kiểm tra lại trạng thái kết nối.
+Cookie, mật khẩu, 2FA, token, mã ghép và thư mục Chrome ở lại nơi quản lý chúng.
+
+3. Đối chiếu đợt đầu
+
+ASUS báo có 29 hồ sơ thật, gồm 28 UID số và 1 hồ sơ chỉ có tên người dùng.
+8 hồ sơ được đánh dấu đã ngừng dùng nằm trong 29 hồ sơ đó. Loại 5 hồ sơ mẫu
+khỏi phép đếm. PC-Company kiểm tra được 22 UID số khác nhau, trong đó 7 hồ sơ
+đã ghi nhận một bản cài connector. Con số 7 chỉ phản ánh việc ghép trước đây.
+
+ASUS lập bảng riêng với các cột sau, mỗi dòng ứng với một hồ sơ gốc.
+  Mã ASUS | UID hoặc tên người dùng | Tên hiển thị | Trạng thái ASUS |
+  Máy giữ Chrome | Mã B trung tâm | Kết quả đối chiếu | Lý do nếu chờ
+Hai bên đối chiếu trước khi nhập. Tổng “đã có + thêm mới + chờ xử lý” phải bằng
+29. Chưa có danh sách theo từng dòng để suy ra số UID trùng từ hai số 22 và 29.
+Danh sách chi tiết được trao đổi riêng. GitHub chỉ cần báo cáo số lượng.
+
+4. Kiểm tra từ ASUS và trả lời phía PC-Company
+
+Mở cùng dashboard HTTPS trên hai máy. Chọn hai hồ sơ đã đối chiếu và so mã B,
+UID, tên, trạng thái ở cả hai màn hình. Tải lại trang sau khi nhập để xác nhận
+cùng thấy mã B mới. Việc thấy một hồ sơ trong danh bạ và việc Chrome đang online
+là hai phép kiểm tra riêng. Khi cần kiểm tra kết nối, đối chiếu thời điểm liên
+lạc gần nhất của đúng hồ sơ trên dashboard. Khi Chrome ngắt kết nối, hồ sơ và
+lịch sử của nó vẫn phải còn trong danh bạ.
+
+ASUS báo có 17 Chrome profile cài connector 1.2.46. Khả năng kết nối của phiên
+bản đó với máy chủ này còn chờ thử trên ASUS. Nếu popup đang hiện localhost
+thì ghi “connector còn trỏ về ASUS”. Mở được trang web chung mới xác nhận
+kết nối từ trình duyệt tới dashboard.
+
+ASUS có thể trả lời theo mẫu sau.
+  Ngày, giờ đối chiếu (giờ Việt Nam) __________
+  Từ ASUS mở được trang đăng nhập / đã thấy danh bạ chung __________
+  Đã có ___ + thêm mới ___ + chờ xử lý ___ = 29
+  Số thực tế đã nhập ___ | số hồ sơ xung đột còn chờ ___
+  Hai hồ sơ mẫu khớp ở cả hai máy ___/2 | đã thấy liên lạc từ Chrome ___/2
+  Vướng mắc cần PC-Company xử lý ______________________________________
