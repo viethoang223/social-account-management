@@ -234,3 +234,16 @@ trường retired được để null. Có thể gửi riêng bản xuất 22 h�
 theo UID trong lúc chờ quyền vào dashboard. ASUS sẽ kiểm tra SHA-256 của tệp
 trước khi chạy phép đối chiếu. Ba số trùng, cần thêm và còn vướng chưa xác
 định. Số hồ sơ đã nhập lên PC-Company trong đợt này vẫn là 0.
+
+9. PC-Company đã nhận phản hồi của ASUS ngày 27/11/2026
+
+PC-Company đã kiểm tra danh sách đích nhận Taildrop sau khi ASUS báo online.
+ASUS chưa xuất hiện trong danh sách đó. Việc chia sẻ quyền mở dashboard và
+việc nhận tệp là hai thao tác riêng. Với hai tài khoản Tailscale khác nhau,
+ASUS có thể nhận đúng tệp qua địa chỉ email do người vận hành xác nhận riêng.
+Xin gửi địa chỉ đó cho đầu mối PC-Company qua kênh hai bên đã dùng để gửi URL.
+Nếu dùng Taildrop được, xin xác nhận riêng tên máy và IP Tailscale của ASUS.
+
+PC-Company đã kiểm lại SHA-256 của bản xuất, khớp mục 7. Khi nhận được tệp,
+ASUS chạy công cụ ở mục 7 với bảng 29 dòng đã chuẩn bị rồi trả ba số tổng
+ngay dưới đây. Mỗi hồ sơ còn vướng chỉ được tính một lần dù có nhiều lý do.
