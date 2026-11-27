@@ -1,11 +1,14 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
-import { COMMENT_QUEUE_MS, COMMENT_READERS, COMMENT_STALL_MS, EXTENSION_CONNECTOR, Q, SUCCESS, UNRESOLVED, workflowFor, type PublishSnapshot } from '@seedingsys/contracts';
+import { ACTIVE, COMMENT_QUEUE_MS, COMMENT_READERS, COMMENT_STALL_MS, EXTENSION_CONNECTOR, InstagramCommentStatus, LIBRARY_FILTERS, Q, ResearchIssueSchema, researchIssueText, SUCCESS, UNRESOLVED,
+  workflowFor, type LibraryCatalog, type PublishSnapshot } from '@seedingsys/contracts';
 import { activeKillSwitch, approvedPersona, audit, closeVariantReviewTasks, commentListener, enqueue, freezeSnapshot, movePublication, moveSlot, openOperatorTask, personaCommentAuthor, Prisma, SnapshotBlockedError, tx, type Db, type Tx } from '@seedingsys/db';
-import { commentBody, commentReplayBody, facebookCommentId, facebookPostId as postId, facebookPostLink, facebookUrl, hashObject, removeAdvertisingLinks, type Clock } from '@seedingsys/domain';
+import { commentBody, commentReplayBody, facebookCommentId, facebookPostId as postId, facebookPostLink, facebookUrl, hashObject, instagramSourceLink, removeAdvertisingLinks, type Clock } from '@seedingsys/domain';
 import { Roles, type Principal } from './auth';
 import { CLOCK, DB } from './tokens';
 import { Actor, parse } from './util';
+import { COMPOSE_SOURCE_REF } from './compose.controller';
+import { instagramThreadJobs } from './research-dispatch';
 
 const SYNC_TIMEOUT_MS = 8 * 60_000;
 const PAGE_SIZE = 25;
@@ -35,6 +38,49 @@ function variantView(value: Prisma.ContentVariantGetPayload<{ select: typeof var
 @Controller('library')
 export class LibraryController {
   constructor(@Inject(DB) private readonly db: Db, @Inject(CLOCK) private readonly clock: Clock) {}
+
+  @Get('catalog')
+  async catalog(@Query() query: unknown): Promise<LibraryCatalog> {
+    const { filter, target, source, q, page } = parse(z.object({
+      filter: z.enum(LIBRARY_FILTERS).default('all'), target: z.string().max(40).optional(), source: z.string().max(40).optional(),
+      q: z.string().trim().max(120).default(''), page: z.coerce.number().int().min(1).max(2000).default(1),
+    }), query);
+    const waiting = ['READY', 'QUEUED', 'FETCHING_MEDIA', 'REWRITING', 'VALIDATING', ...ACTIVE];
+    const attention = [...UNRESOLVED, 'NEEDS_REVIEW', 'FAILED_CONFIRMED', 'CANCELLED', 'REJECTED', 'DUPLICATE'];
+    const matches = filter === 'waiting' ? Prisma.sql`dest.waiting` : filter === 'published' ? Prisma.sql`dest.published`
+      : filter === 'attention' ? Prisma.sql`dest.attention` : Prisma.sql`TRUE`;
+    const rows = await this.db.$queryRaw<Array<Omit<LibraryCatalog['posts'][number], 'date'> & { date: Date; total: number }>>`
+      SELECT sp.id, s.code AS "sourceCode", s.name AS "sourceName", s.external_ref = ${COMPOSE_SOURCE_REF} AS written,
+        left(r.text, 220) AS snippet, coalesce(sp.posted_at, sp.first_seen_at) AS date,
+        sp.content_type::text AS "contentType", coalesce(dest.accounts, '[]'::jsonb) AS accounts,
+        (count(*) OVER ())::int AS total
+      FROM source_posts sp
+      JOIN sources s ON s.id = sp.source_id
+      JOIN source_post_revisions r ON r.id = sp.latest_revision_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object('code', code, 'name', name, 'status', status, 'publicationId', publication_id) ORDER BY code) AS accounts,
+          bool_or(status = ANY(${waiting}::text[])) AS waiting,
+          bool_or(status = ANY(${[...SUCCESS]}::text[])) AS published,
+          bool_or(status = ANY(${attention}::text[])) AS attention
+        FROM (
+          SELECT DISTINCT ON (ta.id) ta.code, ta.name,
+            coalesce(CASE WHEN pub.variant_id = v.id THEN pub.status::text END, v.status::text) AS status,
+            CASE WHEN pub.variant_id = v.id THEN pub.id END AS publication_id
+          FROM content_variants v
+          JOIN target_accounts ta ON ta.id = v.target_id
+          LEFT JOIN publications pub ON pub.source_post_id = sp.id AND pub.target_id = ta.id
+          WHERE v.source_post_id = sp.id AND (${target ?? null}::text IS NULL OR ta.code = ${target ?? null})
+            AND (pub.variant_id = v.id OR (v.revision_id = sp.latest_revision_id AND v.status <> 'SUPERSEDED'))
+          ORDER BY ta.id, (pub.variant_id = v.id AND pub.status NOT IN ('FAILED_CONFIRMED', 'CANCELLED')) DESC NULLS LAST, v.created_at DESC, v.id
+        ) latest_targets
+      ) dest ON TRUE
+      WHERE sp.archived_at IS NULL AND (${source ?? null}::text IS NULL OR s.code = ${source ?? null})
+        AND (${target ?? null}::text IS NULL OR dest.accounts IS NOT NULL)
+        AND (${q} = '' OR strpos(lower(r.text), lower(${q})) > 0) AND ${matches}
+      ORDER BY date DESC, sp.id DESC
+      LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}`;
+    return { total: rows[0]?.total ?? 0, posts: rows.map(({ date, total, ...row }) => ({ ...row, date: date.toISOString() })) };
+  }
 
   @Get('profiles')
   async profiles() {
@@ -96,7 +142,9 @@ export class LibraryController {
       } } } },
     });
     if (!post?.latestRevisionId) throw new NotFoundException('Không tìm thấy bài.');
-    const [revision, variants, publications, scan, comments, composedComments, authors, roleApprovals] = await Promise.all([
+    const instagram = instagramSourceLink(post.permalink ?? '');
+    const instagramPost = instagram?.type === 'post' && post.externalId === 'instagram:' + instagram.id ? instagram : null;
+    const [revision, variants, publications, scan, comments, composedComments, authors, roleApprovals, instagramThread] = await Promise.all([
       this.db.sourcePostRevision.findUniqueOrThrow({ where: { id: post.latestRevisionId }, select: revisionFields }),
       this.db.contentVariant.findMany({ where: { sourcePostId: id, status: { not: 'SUPERSEDED' } },
         orderBy: [{ targetId: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }], distinct: ['targetId'], select: variantFields }),
@@ -112,11 +160,29 @@ export class LibraryController {
       actor?.role === 'admin' || actor?.role === 'reviewer'
         ? this.db.personaApproval.findMany({ orderBy: { approvedAt: 'desc' }, select: { id: true, context: true } })
         : [],
+      instagramPost ? this.db.extensionRadarScan.findFirst({ where: instagramThreadJobs(id),
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { state: true, expiresAt: true, result: true, target: { select: { code: true } } },
+      }) : null,
     ]);
     const ids = [...new Set([...post.source.mappings.map(m => m.target.id), ...variants.map(v => v.targetId), ...publications.map(p => p.targetId)])];
     const targets = await this.db.targetAccount.findMany({ where: { id: { in: ids } }, select: { ...profileFields, audience: true }, orderBy: { code: 'asc' } });
     const { source, ...record } = post;
     const now = +this.clock.now();
+    const threadReport = z.object({ instagramCommentStatus: InstagramCommentStatus.optional(), issue: ResearchIssueSchema.optional(),
+      instagramThreadCheck: z.object({ expected: z.number().int().nonnegative().safe() }).optional() })
+      .safeParse(instagramThread?.result ?? revision.raw).data;
+    const threadState = instagramThread?.state;
+    const scanInProgress = threadState === 'QUEUED' || threadState === 'RUNNING';
+    const instagramCommentState = scanInProgress ? (+instagramThread!.expiresAt > now ? threadState : 'FAILED')
+      : threadState === 'FAILED' ? 'FAILED' : threadReport?.instagramCommentStatus ?? (comments.length ? 'READ' : 'UNREAD');
+    const expectedComments = threadReport?.instagramThreadCheck?.expected;
+    const incompleteThread = threadState === 'COMPLETE' && expectedComments !== undefined && comments.length < expectedComments;
+    const instagramComments = instagramPost ? {
+      state: instagramCommentState, url: instagramPost.url, canScan: !post.archivedAt,
+      targetCode: instagramThread?.target.code ?? null,
+      issue: threadReport?.issue ? researchIssueText[threadReport.issue] : incompleteThread
+        ? `Đã lưu ${comments.length}/${expectedComments} bình luận theo số Instagram báo.` : null,
+    } : null;
     const timedOut = scan?.status === 'RUNNING' && now - +scan.updatedAt >= COMMENT_STALL_MS;
     const replayView = (r: Prisma.PublicationCommentGetPayload<{ select: typeof replayFields }>, sourceText?: string) => {
       const stale = now - +r.updatedAt >= (r.status === 'QUEUED' ? COMMENT_QUEUE_MS : COMMENT_STALL_MS);
@@ -134,10 +200,11 @@ export class LibraryController {
         return speaker && listener ? [{ id: approval.id, speakerId: speaker.id, listenerId: listener.id,
           label: `${role.speaker.alias} (${speaker.code}) → ${role.listener.alias} (${listener.code}) · ${role.relationship.self} / ${role.relationship.other}` }] : [];
       }),
-      post: { ...record, permalink: facebookUrl(record.permalink)?.href ?? null },
+      post: { ...record, permalink: instagramPost?.url ?? facebookUrl(record.permalink)?.href ?? null },
       source: { id: source.id, code: source.code, name: source.name, enabled: source.enabled, connector: source.connector },
       revision: revisionView(revision),
       scan: timedOut ? { ...scan, status: 'FAILED', detail: 'Lượt quét đã hết thời gian. Có thể quét lại.' } : scan,
+      instagramComments,
       canScan: !post.archivedAt && COMMENT_READERS.includes(source.connector) && (source.connector === 'fb-graph' || !!post.permalink),
       comments: comments.map(c => ({ ...c, text: commentBody(c.text), permalink: facebookUrl(c.permalink)?.href ?? null,
         replays: c.replays.map(r => replayView(r, c.text)) })),

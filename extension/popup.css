@@ -1,8 +1,11 @@
 body { margin: 0; width: 330px; background: #f4f7f6; color: #172822; font: 14px system-ui, sans-serif; }
 main { padding: 18px; }
 h1 { font-size: 19px; margin: 0 0 16px; }
+.dashboard { margin: 0 0 12px; }
+.dashboard output { display: block; margin-top: 3px; font-weight: 600; overflow-wrap: anywhere; }
 label { display: block; margin-bottom: 12px; }
 input { box-sizing: border-box; width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #b7c8c0; border-radius: 5px; }
 button { padding: 7px 10px; border: 1px solid #235b43; border-radius: 5px; background: #fff; color: #235b43; cursor: pointer; }
 button[type=submit] { background: #235b43; color: #fff; }
+button:disabled { opacity: .6; cursor: default; }
 #status { margin-bottom: 0; }

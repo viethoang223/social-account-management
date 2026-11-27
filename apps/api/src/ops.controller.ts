@@ -29,7 +29,7 @@ const DISPATCH_MESSAGES: Record<string, string> = {
   DUPLICATE_CONTENT: 'Tài khoản đích đã đăng hoặc đang chờ đăng nội dung này từ một bài nguồn khác.',
 };
 
-function dispatchMessage(reason: string): string {
+export function dispatchMessage(reason: string): string {
   if (reason.startsWith('KILL_SWITCH_')) return 'Đang bị tạm dừng bởi công tắc dừng.';
   return DISPATCH_MESSAGES[reason] ?? 'Lượt đăng vừa thay đổi. Tải lại Backlog và thử lại.';
 }

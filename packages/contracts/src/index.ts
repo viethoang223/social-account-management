@@ -4,3 +4,6 @@ export * from './content';
 export * from './extension';
 export * from './personas';
 export * from './research';
+export * from './source';
+export * from './assignments';
+export * from './compose';

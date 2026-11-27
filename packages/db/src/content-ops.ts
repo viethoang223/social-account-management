@@ -1,6 +1,6 @@
 import { Prisma, type ContentType } from '@prisma/client';
 import { Q as QN, REVIEW_REASONS, SUCCESS, UNRESOLVED, ACTIVE, workflowFor, type IncompleteFlag, type PublishSnapshot } from '@seedingsys/contracts';
-import { HOUR, contentKey, hashObject, isFacebookTimelineReader, removeAdvertisingLinks, revisionContentHash } from '@seedingsys/domain';
+import { HOUR, INSTAGRAM_RESEARCH_MEDIA_CONNECTOR, contentKey, hashObject, isFacebookTimelineReader, removeAdvertisingLinks, revisionContentHash } from '@seedingsys/domain';
 import { audit } from './audit';
 import { contentHolder, duplicateVariant, findSamePost, findSourcePost, hasUnstablePostIds, markDuplicate, onStoredId, recordAlias, revisionContentKey } from './dedup';
 import { enqueue } from './outbox';
@@ -121,7 +121,11 @@ export async function ingestPost(
     && withoutAppendedPreviews(latest.text, knownPreviews) === post.text) {
     post = { ...post, text: latest.text, raw: { ...post.raw, linkPreviews: knownPreviews } };
   }
-  const baseHash = revisionContentHash({ text: post.text, albumTitle: post.albumTitle, media: post.media.map((m) => ({ ref: m.ref })) });
+  const manifest = { text: post.text, albumTitle: post.albumTitle, media: post.media.map(({ ref }) => ({ ref })) };
+  const exactInstagramCaption = args.archiveOnly && args.connector === INSTAGRAM_RESEARCH_MEDIA_CONNECTOR;
+  const baseHash = exactInstagramCaption ? hashObject({ ...manifest,
+    ...(typeof post.raw?.instagramMediaCount === 'number' && { instagramMediaCount: post.raw.instagramMediaCount }),
+  }) : revisionContentHash(manifest);
   const sharedPermalink = post.raw?.sharedPermalink ?? latestInfo?.sharedPermalink;
   const contentHash = trackIncompleteMedia
     ? hashObject({ baseHash, type: post.contentType, incomplete: [...post.incomplete].sort(), ...(sharedPermalink && { sharedPermalink }) })
@@ -147,6 +151,7 @@ export async function ingestPost(
   const equivalent = !sharedPermalink && latest?.contentHash === baseHash && sp.contentType === post.contentType
     && JSON.stringify(latest.incomplete) === JSON.stringify(post.incomplete) ? latest : null;
   const stored = existingRev ?? equivalent;
+  if (exactInstagramCaption && stored && post.media.length) await refreshAssetUrls(t, stored.id, post.media);
   if (trackIncompleteMedia && stored) {
     if (post.media.length) await refreshAssetUrls(t, stored.id, post.media);
     const raw = stored.raw as Record<string, unknown> | null;
@@ -335,7 +340,7 @@ export class SnapshotBlockedError extends Error {}
 /** Build and freeze the publication snapshot (caption + ordered media manifest + audience). */
 export async function freezeSnapshot(
   t: Q,
-  args: { variantId: string; from: 'VALIDATING' | 'NEEDS_REVIEW'; now: Date; actor: string; caption?: string; reviewedBy?: string },
+  args: { variantId: string; from: 'VALIDATING' | 'NEEDS_REVIEW'; now: Date; actor: string; caption?: string; reviewedBy?: string; preserveCaption?: boolean },
 ): Promise<boolean> {
   const variant = await t.contentVariant.findUnique({ where: { id: args.variantId }, select: { sourcePostId: true } });
   if (!variant) return false;
@@ -357,8 +362,11 @@ export async function freezeSnapshot(
     throw new SnapshotBlockedError('Bài nguồn chưa tải đủ ảnh hoặc video. Quét lại nguồn để hoàn tất media trước khi duyệt.');
   }
   const inputCaption = args.caption ?? v.caption ?? (args.from === 'NEEDS_REVIEW' ? v.revision.text : '');
-  const caption = removeAdvertisingLinks(inputCaption).trim();
-  if (!caption && (v.contentType !== 'REEL' || inputCaption.trim())) throw new SnapshotBlockedError('Nhập caption hợp lệ trước khi duyệt.');
+  const caption = args.preserveCaption ? inputCaption : removeAdvertisingLinks(inputCaption).trim();
+  if (!caption.trim() && (args.preserveCaption ? !['REEL', 'VIDEO', 'SINGLE_PHOTO', 'MULTI_PHOTO', 'MEDIA_ALBUM'].includes(v.contentType)
+    : v.contentType !== 'REEL' || inputCaption.trim())) {
+    throw new SnapshotBlockedError('Nhập caption hợp lệ trước khi duyệt.');
+  }
   const media = v.revision.assets.map((pa) => {
     if (pa.asset.status !== 'STORED' || !pa.asset.checksum || !pa.asset.objectKey) throw new SnapshotBlockedError('Bài chưa lưu đủ ảnh hoặc video.');
     return { position: pa.position, assetId: pa.assetId, checksum: pa.asset.checksum, objectKey: pa.asset.objectKey, mime: pa.asset.mime ?? 'application/octet-stream', kind: pa.asset.kind };

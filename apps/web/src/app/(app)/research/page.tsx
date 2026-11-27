@@ -4,12 +4,14 @@ import { Head } from '@/components/ui';
 import { apiGet, can, getSession } from '@/lib/api';
 import { ResearchWorkspace } from './ResearchWorkspace';
 
-export default async function ResearchPage() {
+export default async function ResearchPage({ searchParams }: { searchParams: Promise<{ url?: string | string[] }> }) {
   const session = await getSession();
   if (!can.operate(session.role) && !can.review(session.role)) redirect('/');
   const data = await apiGet<Data>('/research', session.token);
+  const { url } = await searchParams;
+  const initialUrl = typeof url === 'string' ? url.slice(0, 500) : '';
   return <>
     <Head title="Post Research" sub="Giao việc đọc bài và bình luận cho Chrome profile đã ghép." />
-    <ResearchWorkspace data={data} canOperate={can.operate(session.role)} />
+    <ResearchWorkspace key={initialUrl} data={data} canOperate={can.operate(session.role)} initialUrl={initialUrl} />
   </>;
 }

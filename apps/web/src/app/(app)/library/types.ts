@@ -65,6 +65,8 @@ export interface PostDetail {
   source: Profile & { connector: string };
   revision: Revision;
   scan: { status: 'QUEUED' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'FAILED'; readCount: number; expectedCount: number | null; detail: string | null } | null;
+  instagramComments?: { state: 'UNREAD' | 'QUEUED' | 'RUNNING' | 'READ' | 'EMPTY' | 'UNAVAILABLE' | 'FAILED';
+    url: string; canScan: boolean; targetCode: string | null; issue: string | null } | null;
   canScan: boolean;
   comments: SourceComment[];
   composedComments: CommentReplay[];

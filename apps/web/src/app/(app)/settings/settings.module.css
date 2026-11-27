@@ -5,8 +5,8 @@
 .secondaryAction { align-self: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-weight: 600; }
 .secondaryAction span { margin-inline-start: 4px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 5px; border-bottom: 1px solid var(--line); }
-.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; margin-bottom: -1px; background: transparent; padding: 8px 12px; color: var(--muted); font-weight: 600; }
-.tabs button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); background: var(--info-bg); }
+.tabs a { border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; margin-bottom: -1px; padding: 8px 12px; color: var(--muted); font-weight: 600; }
+.tabs a[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); background: var(--info-bg); }
 .stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .stages li { display: flex; gap: 10px; align-items: center; padding: 12px 15px; position: relative; }
 .stages li + li { border-inline-start: 1px solid var(--line); }
@@ -47,6 +47,9 @@
 .scanStatus dl { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 20px; }
 .scanStatus dd { color: var(--text); font-variant-numeric: tabular-nums; margin: 0; }
 .hint { font-size: 12px; color: var(--muted); }
+.parentUidTable { margin-top: 12px; }
+.parentUidTable th[scope="row"] { color: var(--text); white-space: nowrap; }
+.parentUidTable input { width: 100%; min-width: 140px; }
 
 @media (max-width: 1190px) and (min-width: 861px) { .cards { grid-template-columns: 1fr; } }
 @media (max-width: 700px) {

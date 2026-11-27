@@ -236,7 +236,17 @@ function CommentDraft({ detail, comment, parent, composed, target, canReview, ca
 export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, canArchive }: {
   detail: PostDetail; requestedTarget?: string; canReview: boolean; canOperate: boolean; canArchive: boolean;
 }) {
-  const { source, post, revision, scan, comments, destinations } = detail;
+  const { source, post, revision, scan, comments, destinations, instagramComments } = detail;
+  const readingInstagram = instagramComments?.state === 'QUEUED' || instagramComments?.state === 'RUNNING';
+  const instagramCommentLabels = {
+    UNREAD: 'Bài Instagram này chưa được quét bình luận.',
+    QUEUED: 'Đang chờ Chrome đọc bình luận Instagram.',
+    RUNNING: 'Đang đọc bình luận Instagram.',
+    READ: 'Đã lưu các bình luận Instagram đọc được.',
+    EMPTY: 'Instagram báo bài này chưa có bình luận.',
+    UNAVAILABLE: 'Chrome chưa đọc được bình luận từ phần Instagram hiển thị.',
+    FAILED: 'Lượt đọc bình luận Instagram không hoàn tất.',
+  };
   const [targetCode, setTargetCode] = useState(requestedTarget ?? destinations[0]?.target.code ?? '');
   const [selectedComment, setSelectedComment] = useState<string>();
   const [selectedComposed, setSelectedComposed] = useState<string>();
@@ -300,6 +310,10 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
             {(canOperate || canReview) && detail.canScan && <ActionButton path={`library/posts/${post.id}/comments/scan`} disabled={running}>
               {scan ? 'Quét lại bình luận' : 'Quét bình luận'}
             </ActionButton>}
+            {(canOperate || canReview) && instagramComments?.canScan && <ActionButton path="research" disabled={readingInstagram}
+              body={{ url: instagramComments.url, limit: 20, saveCommentsTo: post.id }}>
+              {instagramComments.state === 'UNREAD' ? 'Quét bình luận Instagram' : 'Quét lại bình luận Instagram'}
+            </ActionButton>}
           </div>
         </div>
         {sendAll.error && <p className="err" role="alert">{sendAll.error}</p>}
@@ -317,7 +331,9 @@ export function PostWorkspace({ detail, requestedTarget, canReview, canOperate, 
         {dest && selectedComposed && (selectedDraft || canCompose) && <CommentDraft key={selectedComposed}
           detail={detail} composed={{ id: selectedComposed, replay: selectedDraft }} target={dest} canReview={canReview} canOperate={canOperate} />}
         {!source.enabled && detail.canScan && <p className="muted">Nguồn đang tắt quét tự động. Bạn có thể quét bình luận của riêng bài này.</p>}
-        {!detail.canScan && !scan && <p className="muted">Kết nối của bài này chưa hỗ trợ quét bình luận.</p>}
+        {instagramComments && <p className="muted" role="status">{instagramCommentLabels[instagramComments.state]}
+          {instagramComments.targetCode && ` · ${instagramComments.targetCode}`}{instagramComments.issue && ` · ${instagramComments.issue}`}</p>}
+        {!detail.canScan && !scan && !instagramComments && <p className="muted">Kết nối của bài này chưa hỗ trợ quét bình luận.</p>}
         {scan && <div className={styles.progress} role="status">
           <strong>{SCAN_LABEL[scan.status]}</strong><span>{scan.readCount}{scan.expectedCount !== null ? `/${scan.expectedCount}` : ''} bình luận trong lượt này</span>
           {running && <progress aria-label="Tiến độ quét bình luận" max={scan.expectedCount || undefined} value={scan.expectedCount ? Math.min(scan.readCount, scan.expectedCount) : undefined} />}

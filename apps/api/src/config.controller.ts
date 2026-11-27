@@ -1,6 +1,6 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { z } from 'zod';
-import { EXTENSION_CONNECTOR, Q } from '@seedingsys/contracts';
+import { EXTENSION_CONNECTOR, isExtensionPublishAudience, Q, SOURCE_CODE_PATTERN } from '@seedingsys/contracts';
 import { activeKillSwitch, activeLease, audit, enqueue, Prisma, sourceResource, tx, type Db } from '@seedingsys/db';
 import { facebookSourceUrl, isFacebookTimelineReader, type Clock } from '@seedingsys/domain';
 import { Roles, type Principal } from './auth';
@@ -8,7 +8,7 @@ import { CLOCK, DB } from './tokens';
 import { Actor, out, parse } from './util';
 
 const SourceIn = z.object({
-  code: z.string().regex(/^A\d+$/),
+  code: z.string().regex(new RegExp(`^${SOURCE_CODE_PATTERN}$`), 'Mã nguồn dùng tiền tố N, ví dụ N21.'),
   name: z.string().min(1),
   externalRef: z.string().min(1),
   connector: z.enum(['fake', 'manual', 'fb-graph', 'fb-web', 'fb-public', 'fb-session']),
@@ -23,6 +23,12 @@ function publicSourceRef(ref: string): string {
   if (!url) throw new BadRequestException('Nhập URL trang cá nhân hoặc fanpage trên facebook.com.');
   return url.href;
 }
+
+const facebookUid = z.string().regex(/^\d{1,32}$/, 'UID Facebook phải có từ 1 đến 32 chữ số.').nullable();
+const ParentAccountsIn = z.object({ changes: z.array(z.object({
+  slot: z.number().int().positive().max(2_147_483_647), uid: facebookUid, previousUid: facebookUid,
+})).min(1).max(100) });
+
 const TargetIn = z.object({
   code: z.string().regex(/^B\d+$/),
   name: z.string().min(1),
@@ -34,8 +40,8 @@ const TargetIn = z.object({
   styleProfile: z.record(z.unknown()).optional(),
 });
 function validateExtensionTarget(connector: string, uid: string, audience: string) {
-  if (connector === EXTENSION_CONNECTOR && (!/^\d{1,32}$/.test(uid) || audience !== 'ONLY_ME')) {
-    throw new BadRequestException('Đích extension cần UID số và đối tượng Chỉ mình tôi.');
+  if (connector === EXTENSION_CONNECTOR && (!/^\d{1,32}$/.test(uid) || !isExtensionPublishAudience(audience))) {
+    throw new BadRequestException('Đích extension cần UID số và đối tượng Chỉ mình tôi hoặc Công khai.');
   }
 }
 
@@ -130,6 +136,50 @@ export class ConfigController {
       },
     }));
   }
+
+  @Get('parent-accounts')
+  @Roles('admin')
+  async parentAccounts() {
+    return this.db.parentAccount.findMany({ orderBy: { slot: 'asc' } });
+  }
+
+  @Patch('parent-accounts')
+  @Roles('admin')
+  async updateParentAccounts(@Body() body: unknown, @Actor() a: Principal) {
+    const { changes } = parse(ParentAccountsIn, body);
+    const slots = changes.map(change => change.slot);
+    if (new Set(slots).size !== slots.length) throw new BadRequestException('Mỗi mã A chỉ được gửi một lần.');
+    try {
+      return await tx(this.db, async t => {
+        const rows = await t.$queryRaw<Array<{ slot: number; uid: string | null }>>`
+          SELECT slot, uid FROM parent_accounts WHERE slot IN (${Prisma.join(slots)}) ORDER BY slot FOR UPDATE`;
+        const current = new Map(rows.map(row => [row.slot, row.uid]));
+        for (const change of changes) {
+          if (!current.has(change.slot)) throw new NotFoundException(`Chưa có mã A${change.slot} trong danh bạ.`);
+          if (current.get(change.slot) !== change.previousUid) {
+            throw new ConflictException(`A${change.slot} vừa thay đổi. Tải lại trang rồi thử lại.`);
+          }
+        }
+        const updates = changes.filter(change => change.uid !== change.previousUid);
+        if (updates.length) {
+          await t.parentAccount.updateMany({ where: { slot: { in: updates.map(change => change.slot) } }, data: { uid: null } });
+          const now = this.clock.now();
+          for (const { slot, uid } of updates) {
+            if (uid !== null) await t.parentAccount.update({ where: { slot }, data: { uid } });
+            await audit(t, { entityType: 'parent_account', entityId: `A${slot}`, action: uid === null ? 'uid_cleared' : 'uid_assigned', actor: a.actor, at: now });
+          }
+        }
+        return t.parentAccount.findMany({ orderBy: { slot: 'asc' } });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2002') throw new ConflictException('UID Facebook chỉ được gán cho một mã A. Kiểm tra UID bị trùng.');
+        if (error.code === 'P2034') throw new ConflictException('Danh bạ vừa thay đổi. Tải lại trang rồi thử lại.');
+      }
+      throw error;
+    }
+  }
+
   @Post('targets')
   @Roles('admin')
   async createTarget(@Body() body: unknown, @Actor() a: Principal) {
@@ -168,6 +218,28 @@ export class ConfigController {
     const m = await this.db.sourceTargetMapping.create({ data: parse(MappingIn, body) });
     await audit(this.db, { entityType: 'mapping', entityId: m.id, action: 'created', actor: a.actor, at: this.clock.now() });
     return out(m);
+  }
+  @Post('mappings/batch')
+  @Roles('admin')
+  async createMappings(@Body() body: unknown, @Actor() actor: Principal) {
+    const { targetIds, ...settings } = parse(MappingIn.omit({ targetId: true }).extend({
+      targetIds: z.array(z.string().uuid()).min(1).max(200),
+    }), body);
+    return tx(this.db, async t => {
+      const targets = [...new Set(targetIds)];
+      if (!await t.source.findUnique({ where: { id: settings.sourceId }, select: { id: true } })
+        || await t.targetAccount.count({ where: { id: { in: targets } } }) !== targets.length) {
+        throw new ConflictException('Nguồn hoặc tài khoản đã thay đổi. Tải lại danh sách.');
+      }
+      const created = await t.sourceTargetMapping.createManyAndReturn({
+        data: targets.map(targetId => ({ ...settings, targetId })), skipDuplicates: true,
+      });
+      const now = this.clock.now();
+      for (const mapping of created) {
+        await audit(t, { entityType: 'mapping', entityId: mapping.id, action: 'created', actor: actor.actor, at: now });
+      }
+      return out({ created, skipped: targets.length - created.length });
+    });
   }
   @Patch('mappings/:id')
   @Roles('admin')

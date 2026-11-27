@@ -1,5 +1,5 @@
 /** Read a timeline or a post inside the job's own Facebook document. */
-export async function readResearch(mode, requested, limit, deadline) {
+export async function readResearch(mode, requested, limit, deadline, expectedCaption) {
   const origin = 'https://www.facebook.com';
   const article = 'article,[role="article"]';
   const message = '[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-ad-rendering-role="story_message"],[data-testid="post_message"]';
@@ -58,31 +58,101 @@ export async function readResearch(mode, requested, limit, deadline) {
       captionPartial: blocks.length > 1 || /(?:…|\.{3}|xem thêm|see more)$/i.test(body),
     };
   };
+  const knownCaption = scope => {
+    const data = caption(scope);
+    if (!expectedCaption) return data;
+    const compare = value => value.normalize('NFC').replace(/\s+/g, ' ').trim();
+    const wanted = compare(expectedCaption);
+    if (compare(data.body) === wanted) return data;
+    const withEmoji = node => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      if (node.nodeName === 'BR') return ' ';
+      if (node.nodeName === 'IMG') return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u.test(node.alt) ? node.alt : '';
+      const contents = [...node.childNodes].map(withEmoji).join('');
+      return /^(?:DIV|P|LI)$/.test(node.nodeName) ? contents + ' ' : contents;
+    };
+    const candidates = data.body ? messageBlocks(scope) : own(scope, '[dir="auto"],p')
+      .filter(el => !el.closest('a,button,[role="button"],textarea'));
+    return candidates.some(el => compare(text(el)) === wanted
+      || (el.querySelector('img[alt]') && compare(withEmoji(el)) === wanted))
+      ? { body: expectedCaption, captionPartial: false } : data;
+  };
+  const openedCaptions = new WeakSet();
+  const revealMatchingCaption = async card => {
+    if (!expectedCaption) return;
+    const expand = named(card, control, expandText).filter(button => !isComment(button.closest(article)));
+    if (expand.length !== 1 || openedCaptions.has(expand[0])) return;
+    const normalize = value => value.normalize('NFC').replace(/\s+/g, ' ').trim();
+    const wanted = normalize(expectedCaption);
+    const matchesPrefix = node => {
+      const prefix = normalize(text(node).replace(/\s*(?:xem thêm|see more)\s*$/i, '').replace(/\s*(?:…|\.{3})\s*$/, ''));
+      return prefix.length > 0 && wanted.startsWith(prefix);
+    };
+    const nearby = messageBlocks(card);
+    for (let scope = expand[0].parentElement; scope && scope !== card; scope = scope.parentElement) nearby.push(scope);
+    if (!nearby.some(matchesPrefix)) return;
+    openedCaptions.add(expand[0]);
+    expand[0].click();
+    await pause(300);
+  };
   if (!allowed()) return null;
-  if (mode === 'profile') {
+  if (mode === 'profile' || mode === 'publication') {
     const main = document.querySelector('main,[role="main"]');
     if (!main) return null;
+    const publication = mode === 'publication';
+    const loadFirstPostsUntil = publication && expectedCaption
+      ? Math.min(Date.now() + 7500, deadline - 700) : 0;
     const rows = new Map();
     let still = 0;
-    for (let round = 0; round < 27 && allowed() && rows.size < limit && still < 4; round++) {
+    for (let round = 0; round < 27 && allowed() && rows.size < limit; round++) {
       const before = rows.size;
-      const cards = all(main, article).filter(card => !isComment(card));
+      const cards = all(main, article).filter(card => !isComment(card)
+        && (!publication || !card.parentElement.closest(article)));
+      if (publication) {
+        const actions = named(main, control, /^(?:Actions for this post|Hành động cho bài viết|Tùy chọn bài viết)(?:\s|$)/i);
+        for (const button of actions) {
+          if (cards.some(card => card.contains(button))) continue;
+          for (let scope = button.parentElement; scope && scope !== main; scope = scope.parentElement) {
+            if (actions.some(other => other !== button && scope.contains(other))) break;
+            if (own(scope, heading).some(anchor => person(anchor.href)) && knownCaption(scope).body
+              && own(scope, 'a[href]').some(anchor => post(anchor.href))) {
+              cards.push(scope);
+              break;
+            }
+          }
+        }
+      }
       for (const card of cards) {
-        const direct = own(card, 'a[href]').filter(anchor => anchor.closest(article) === card)
-          .map(anchor => post(anchor.href)).filter(Boolean);
+        const inCard = anchor => card.matches(article) ? anchor.closest(article) === card : !isComment(anchor.closest(article));
+        const links = own(card, 'a[href]').filter(inCard);
+        const direct = links.map(anchor => post(anchor.href)).filter(item => item &&
+          (!publication || /\/(?:posts\/|reel\/|videos\/|photo(?:\.php)?(?:\/|$)|story\.php|permalink\.php)/.test(new URL(item.url).pathname)));
         if (!direct.length || rows.has(direct[0].id)) continue;
-        const metadata = caption(card);
+        if (publication && expectedCaption) await revealMatchingCaption(card);
+        if (!card.isConnected) continue;
+        const metadata = publication ? knownCaption(card) : caption(card);
         const title = own(card, heading).map(text).find(Boolean) || 'Bài trên Facebook';
-        rows.set(direct[0].id, { url: direct[0].url, title, ...metadata });
+        const authorUrl = publication ? own(card, heading)
+          .filter(inCard).map(anchor => person(anchor.href)).find(Boolean) : null;
+        rows.set(direct[0].id, { url: direct[0].url, title, ...metadata, ...(publication && { authorUrl }) });
         if (rows.size === limit) break;
       }
       still = before === rows.size ? still + 1 : 0;
-      if (rows.size === limit || still === 4) break;
-      (cards.at(-1) ?? main).scrollIntoView({ block: 'end' });
-      window.scrollBy(0, Math.max(window.innerHeight, 700));
+      const loadingFirstPosts = !rows.size && Date.now() < loadFirstPostsUntil;
+      if (rows.size === limit || (still >= 4 && !loadingFirstPosts) || deadline - Date.now() < 500) break;
+      if (loadingFirstPosts) {
+        window.scrollBy(0, Math.max(300, Math.floor(window.innerHeight * 0.7)));
+      } else {
+        (cards.at(-1) ?? main).scrollIntoView({ block: 'end' });
+        window.scrollBy(0, Math.max(window.innerHeight, 700));
+      }
       await pause(420);
     }
-    return allowed() ? { url: location.href, value: { rows: [...rows.values()], ended: still === 4 } } : null;
+    const creatorLibrary = publication && expectedCaption && all(main, 'a[href]').map(anchor => link(anchor.href))
+      .find(url => url?.pathname.replace(/\/$/, '') === '/professional_dashboard/content/content_library');
+    return allowed() ? { url: location.href, value: { rows: [...rows.values()], ended: still >= 4,
+      ...(creatorLibrary && { creatorLibrary: creatorLibrary.origin + creatorLibrary.pathname }) } } : null;
   }
   const targetId = post(requested)?.id;
   const unable = issue => ({ url: location.href, issue });

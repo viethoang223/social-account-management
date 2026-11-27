@@ -18,6 +18,7 @@ enum ContentType {
   QUOTE_IMAGE
   SINGLE_PHOTO
   MULTI_PHOTO
+  MEDIA_ALBUM
   NAMED_ALBUM
   VIDEO
   REEL
@@ -158,11 +159,17 @@ enum ProfileSyncPhase {
   FAILED
 }
 
+enum WorkAssignmentStatus {
+  PENDING
+  DONE
+  CANCELLED
+}
+
 // ─────────────────────────── Configuration ───────────────────────────
 
 model Source {
   id              String    @id @default(uuid()) @db.Uuid
-  code            String    @unique // "A1".."A50"
+  code            String    @unique // "N1", "N2", … (content sources)
   name            String
   externalRef     String    @map("external_ref") // URL or ID of the source
   connector       String // read connector key: "fake" | "manual" | "fb-graph" | "fb-web" | "fb-public"
@@ -183,8 +190,16 @@ model Source {
   posts    SourcePost[]
   mappings SourceTargetMapping[]
   postAliases SourcePostAlias[]
+  workAssignments WorkAssignment[]
 
   @@map("sources")
+}
+
+model ParentAccount {
+  slot Int     @id
+  uid  String? @unique
+
+  @@map("parent_accounts")
 }
 
 model TargetAccount {
@@ -211,6 +226,7 @@ model TargetAccount {
   capabilities CapabilityCheck[]
   commentAuthors      PublicationComment[] @relation("CommentAuthor")
   commentDestinations PublicationComment[] @relation("CommentDestination")
+  workAssignments WorkAssignmentTarget[]
 
   @@map("target_accounts")
 }
@@ -399,12 +415,48 @@ model SourcePost {
   commentScans CommentScan[]
   syncItems ProfileSyncItem[]
   aliases   SourcePostAlias[]
+  workAssignments WorkAssignment[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId, firstSeenAt, id])
   @@index([sourceId, id])
   @@index([sourceId, postedAt])
   @@map("source_posts")
+}
+
+model WorkAssignment {
+  id               String               @id @default(uuid()) @db.Uuid
+  code             String
+  status           WorkAssignmentStatus @default(PENDING)
+  sourceId         String?              @map("source_id") @db.Uuid
+  sourcePostId     String?              @map("source_post_id") @db.Uuid
+  fromAssignmentId String?              @map("from_assignment_id") @db.Uuid
+  urls             String[]             @default([])
+  brief            String               @default("")
+  results          String[]             @default([])
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  source         Source?                @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourcePost     SourcePost?            @relation(fields: [sourcePostId], references: [id], onDelete: SetNull)
+  fromAssignment WorkAssignment?        @relation("AssignmentHandoff", fields: [fromAssignmentId], references: [id], onDelete: SetNull)
+  followUps      WorkAssignment[]       @relation("AssignmentHandoff")
+  targets        WorkAssignmentTarget[]
+
+  @@index([createdAt, id])
+  @@index([code, status, createdAt])
+  @@map("work_assignments")
+}
+
+model WorkAssignmentTarget {
+  assignmentId String @map("assignment_id") @db.Uuid
+  targetId     String @map("target_id") @db.Uuid
+  assignment   WorkAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  target       TargetAccount  @relation(fields: [targetId], references: [id], onDelete: Restrict)
+
+  @@id([assignmentId, targetId])
+  @@index([targetId])
+  @@map("work_assignment_targets")
 }
 
 // Another platform id under which a stored post was read again (Facebook rotates a post's

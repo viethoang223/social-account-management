@@ -1,6 +1,6 @@
 import { loadConfig } from '@seedingsys/config';
 import { Q } from '@seedingsys/contracts';
-import { createDb } from '@seedingsys/db';
+import { createDb, runInstagramPublishBatch, saveApprovedInstagramBatchPost } from '@seedingsys/db';
 import { systemClock } from '@seedingsys/domain';
 import { createEditor, LlmGateway } from '@seedingsys/llm';
 import { createLogger, initObservability } from '@seedingsys/observability';
@@ -30,6 +30,10 @@ async function main() {
   });
   await work(boss, Q.ContentRewrite, cfg.LLM_MAX_CONCURRENCY, log, (p) => handleContentRewrite(ctx, p));
   await work(boss, Q.ContentValidate, 3, log, (p) => handleContentValidate(ctx, p));
+  await work(boss, Q.InstagramBatchImport, 1, log, async ({ batchId, researchId }) => {
+    await saveApprovedInstagramBatchPost(db, batchId, researchId, clock.now());
+  });
+  await work(boss, Q.InstagramBatchPublish, 2, log, (job) => runInstagramPublishBatch(ctx, job));
 
   // Outbox relay: tight loop, at-least-once into pg-boss.
   let stopping = false;

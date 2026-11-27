@@ -4,7 +4,7 @@
 
 [Phân vai và Radar trên nhánh main](docs/PERSONA-RADAR.md)
 
-Hệ thống điều phối A → B theo đặc tả *SeedingSys Pilot A1–A5 → B1–B5 v1.0*: thu thập nguồn mỗi 5 phút, biên tập bằng LLM, cấp tối đa 1 lượt đăng mỗi giờ cho mỗi tài khoản đích, xác minh và đối soát kết quả. Thiết kế để lên 50 nguồn/đích bằng cách thêm cấu hình và worker, không đổi schema.
+SeedingSys điều phối nội dung từ nguồn N tới tài khoản đăng B: thu thập nguồn mỗi 5 phút, biên tập bằng LLM, cấp tối đa 1 lượt đăng mỗi giờ cho mỗi tài khoản đích, xác minh và đối soát kết quả. Thiết kế để lên 50 nguồn/đích bằng cách thêm cấu hình và worker, không đổi schema.
 
 ## Trạng thái triển khai
 
@@ -30,7 +30,7 @@ copy .env.example .env
 pnpm db:local          # terminal 1: PostgreSQL nhúng ở 127.0.0.1:54329 (dữ liệu trong .data/pg)
 pnpm db:generate
 pnpm db:migrate
-pnpm db:seed           # A1–A5 → B1–B5 dùng FakeConnector
+pnpm db:seed           # N1–N5 → B1–B5 dùng FakeConnector
 pnpm dev:all           # api + worker-core + worker-browser + worker-media + web (http://localhost:3000)
 ```
 
@@ -39,15 +39,15 @@ Mở **http://localhost:3000** và đăng nhập bằng một mã trong `API_TOK
 Thêm bài giả lập và xem kết quả:
 
 ```powershell
-pnpm fake post A1 "Ưu đãi giảm 30% đến hết 25/11"
-pnpm fake post A2 "Album sự kiện" --photos 3
+pnpm fake post N1 "Ưu đãi giảm 30% đến hết 25/11"
+pnpm fake post N2 "Album sự kiện" --photos 3
 pnpm fake timeline fb-B1
 pnpm fake session fb-B1 CHECKPOINT
 ```
 
 Với Facebook thật (sau khi đọc [docs/FB-WEB.md](docs/FB-WEB.md)): `pnpm fb:login B1` (tự đăng nhập), `pnpm fb:capability B1 --yes` (kiểm thử ở “Chỉ mình tôi”).
 
-Để quét nguồn A1 bằng URL, vào **Quản trị luồng đăng → A1 → B1**, chọn **Facebook công khai**, dán link tại **Nguồn A1** và lưu. Worker tự quét theo chu kỳ. Nút **Quét ngay** gửi một lượt quét cho worker. Nội dung và thông tin bài nằm trong PostgreSQL. Các tệp ảnh và video tải được lưu vào bucket khi dùng `STORAGE_DRIVER=r2`.
+Để quét nguồn N1 bằng URL, vào **Quản trị luồng đăng → N1 → B1**, chọn **Facebook công khai**, dán link tại **Nguồn N1** và lưu. Worker tự quét theo chu kỳ. Nút **Quét ngay** gửi một lượt quét cho worker. Nội dung và thông tin bài nằm trong PostgreSQL. Các tệp ảnh và video tải được lưu vào bucket khi dùng `STORAGE_DRIVER=r2`.
 
 Nguồn Facebook công khai đưa các bài tìm được vào luồng xử lý ngay từ lượt quét đầu. Nguồn có chế độ mốc lưu bài cũ ở lần đồng bộ đầu. Bài sẵn sàng được chọn theo lịch đầu giờ hoặc qua nút **Đăng ngay** ở Backlog.
 
@@ -103,7 +103,7 @@ tests/             e2e, faults, harness (Postgres nhúng + đồng hồ giả l�
 
 ## Việc tiếp theo
 
-1. Giai đoạn 0 (vận hành): ma trận quyền đọc A1–A5, văn bản đồng ý chủ tài khoản B1–B5, cố định locale/audience.
+1. Giai đoạn 0 (vận hành): ma trận quyền đọc N1–N5, văn bản đồng ý chủ tài khoản B1–B5, cố định locale/audience.
 2. Kiểm chứng selector `fb-web` trên giao diện thật + capability test ≥20 ca/định dạng ở chế độ "Chỉ mình tôi".
 3. Extension MV3, takeover qua noVNC.
 4. media.prepare (FFprobe/FFmpeg), agent.recover với 7 công cụ giới hạn.

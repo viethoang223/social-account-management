@@ -3,6 +3,7 @@ export const CONTENT_TYPES = [
   'QUOTE_IMAGE',
   'SINGLE_PHOTO',
   'MULTI_PHOTO',
+  'MEDIA_ALBUM',
   'NAMED_ALBUM',
   'VIDEO',
   'REEL',
@@ -27,6 +28,7 @@ export function workflowFor(t: ContentType): WorkflowKind | null {
     case 'SINGLE_PHOTO':
       return 'STANDARD';
     case 'MULTI_PHOTO':
+    case 'MEDIA_ALBUM':
     case 'NAMED_ALBUM':
       return 'ALBUM';
     case 'VIDEO':

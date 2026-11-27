@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useId, useState, type ReactNode } from 'react';
+import { isExtensionPublishAudience, SOURCE_CODE_PATTERN } from '@seedingsys/contracts';
 import { AutoRefresh, bff, useSubmit } from '@/components/client';
 import { Badge } from '@/components/ui';
 import { fmtTime } from '@/lib/format';
@@ -108,7 +109,7 @@ export function SourceForm({ source }: { source?: SourceT }) {
         }, source ? 'Đã lưu nguồn' : 'Đã thêm nguồn');
       }}>
         <div className={styles.fields}>
-          {!source && <div className="field"><label htmlFor={id + '-code'}>Mã nguồn</label><input id={id + '-code'} required pattern="A[0-9]+" placeholder="A6" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>}
+          {!source && <div className="field"><label htmlFor={id + '-code'}>Mã nguồn</label><input id={id + '-code'} required pattern={SOURCE_CODE_PATTERN} placeholder="N23" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>}
           <div className="field"><label htmlFor={id + '-name'}>Tên nguồn</label><input id={id + '-name'} required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
           <div className="field"><label htmlFor={id + '-method'}>Cách lấy bài</label><select id={id + '-method'} value={form.connector} onChange={e => setForm({ ...form, connector: e.target.value })}>
             {Object.entries(sourceMethods).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -186,7 +187,7 @@ function ExtensionPairing({ target }: { target: TargetT }) {
         <input aria-label="Mã profile mới" type="text" className="mono" readOnly value={token} onFocus={event => event.currentTarget.select()} />
       </label>}
       {error && <p role="alert">{error}</p>}
-      <p>Bản 1.0 hỗ trợ bài chữ ở chế độ Chỉ mình tôi. Xác nhận liên kết ở mục Cần xử lý sau khi đăng.</p>
+      <p>Đăng bài chữ ở chế độ Chỉ mình tôi hoặc Công khai. Đăng công khai cần extension 1.2.5 trở lên.</p>
     </div>
   );
 }
@@ -258,9 +259,9 @@ export function TargetForm({ target, capabilities }: { target?: TargetT; capabil
         <div className={styles.fields}>
           {!target && <div className="field"><label htmlFor={id + '-code'}>Mã đích</label><input id={id + '-code'} required pattern="B[0-9]+" placeholder="B6" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>}
           <div className="field"><label htmlFor={id + '-name'}>Tên tài khoản</label><input id={id + '-name'} required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-          <div className="field"><label htmlFor={id + '-connector'}>Cách đăng</label><select id={id + '-connector'} value={form.connector} onChange={e => setForm({ ...form, connector: e.target.value, audience: e.target.value === 'fb-extension' ? 'ONLY_ME' : form.audience })}><option value="fake">Giả lập</option><option value="fb-web">Facebook</option><option value="fb-extension">Facebook qua extension</option></select></div>
+          <div className="field"><label htmlFor={id + '-connector'}>Cách đăng</label><select id={id + '-connector'} value={form.connector} onChange={e => setForm({ ...form, connector: e.target.value, audience: e.target.value === 'fb-extension' && !isExtensionPublishAudience(form.audience) ? 'ONLY_ME' : form.audience })}><option value="fake">Giả lập</option><option value="fb-web">Facebook</option><option value="fb-extension">Facebook qua extension</option></select></div>
           <div className="field"><label htmlFor={id + '-external'}>{extension ? 'UID Facebook' : real ? 'ID hoặc tên người dùng Facebook' : 'ID tài khoản giả lập'}</label><input id={id + '-external'} autoComplete="off" required pattern={extension ? '[0-9]{1,32}' : undefined} value={form.externalId} onChange={e => setForm({ ...form, externalId: e.target.value })} /></div>
-          <div className="field"><label htmlFor={id + '-audience'}>Đối tượng xem</label><select id={id + '-audience'} value={form.audience} disabled={extension} onChange={e => setForm({ ...form, audience: e.target.value })}>{Object.entries(audiences).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div>
+          <div className="field"><label htmlFor={id + '-audience'}>Đối tượng xem</label><select id={id + '-audience'} value={form.audience} onChange={e => setForm({ ...form, audience: e.target.value })}>{Object.entries(audiences).filter(([value]) => !extension || isExtensionPublishAudience(value)).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div>
           <Enabled checked={form.enabled} onChange={enabled => setForm({ ...form, enabled })}>Bật tài khoản đích</Enabled>
         </div>
         <details className={styles.advanced}>
@@ -280,7 +281,7 @@ export function TargetForm({ target, capabilities }: { target?: TargetT; capabil
   );
 }
 
-export function MappingForm({ mapping, sources, targets, mappings, onCreated }: { mapping?: MappingT; sources: SourceT[]; targets: TargetT[]; mappings: MappingT[]; onCreated: (id: string) => void }) {
+export function MappingForm({ mapping, sources, targets, mappings }: { mapping?: MappingT; sources: SourceT[]; targets: TargetT[]; mappings: MappingT[] }) {
   const id = useId();
   const [form, setForm] = useState(() => ({
     sourceId: mapping?.sourceId ?? sources[0]?.id ?? '', targetId: mapping?.targetId ?? '',
@@ -289,29 +290,44 @@ export function MappingForm({ mapping, sources, targets, mappings, onCreated }: 
     reviewMode: mapping?.reviewMode ?? 'AUTO', maxPublishTries: mapping?.maxPublishTries ?? 2,
   }));
   const sub = useSubmit();
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const availableTargets = targets.filter(t => !mappings.some(m => m.sourceId === form.sourceId && m.targetId === t.id));
-  const targetId = mapping ? form.targetId : availableTargets.find(t => t.id === form.targetId)?.id ?? availableTargets[0]?.id;
+  const targetIds = availableTargets.filter(t => selectedTargets.includes(t.id)).map(t => t.id);
   return (
     <Panel title={mapping ? 'Duyệt và lịch đăng' : 'Tạo luồng nguồn → đích'}
       description="Mỗi đích có tối đa một lượt đăng vào đầu mỗi giờ theo giờ Việt Nam."
       right={mapping && <Link href="/schedule">Xem lịch đăng ↗</Link>}>
       <form onSubmit={e => {
         e.preventDefault();
-        if (!targetId) return;
+        if (mapping) {
+          sub.run(() => bff<MappingT>('PATCH', 'mappings/' + mapping.id, form), 'Đã lưu luồng');
+          return;
+        }
+        if (!targetIds.length) return;
         sub.run(async () => {
-          const result = await bff<MappingT>(mapping ? 'PATCH' : 'POST', mapping ? 'mappings/' + mapping.id : 'mappings', { ...form, targetId });
-          if (result.ok && !mapping) onCreated(result.data.id);
+          const result = await bff<{ created: MappingT[]; skipped: number }>('POST', 'mappings/batch', { ...form, targetIds });
+          if (result.ok) setSelectedTargets([]);
           return result;
-        }, mapping ? 'Đã lưu luồng' : 'Đã tạo luồng');
+        }, data => data ? 'Đã tạo ' + data.created.length + ' luồng. Luồng đã có: ' + data.skipped + '.' : 'Đã lưu luồng.');
       }}>
         <div className={styles.fields}>
           {!mapping && <>
-            <div className="field"><label htmlFor={id + '-source'}>Nguồn</label><select id={id + '-source'} required value={form.sourceId} onChange={e => setForm({ ...form, sourceId: e.target.value })}><option value="" disabled>Chọn nguồn</option>{sources.map(s => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}</select></div>
-            <div className="field"><label htmlFor={id + '-target'}>Đích</label><select id={id + '-target'} required value={targetId ?? ''} onChange={e => setForm({ ...form, targetId: e.target.value })}><option value="" disabled>{targets.length ? 'Không còn đích khả dụng' : 'Thêm tài khoản đích trước'}</option>{availableTargets.map(t => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}</select></div>
+            <div className="field"><label htmlFor={id + '-source'}>Nguồn</label><select id={id + '-source'} required value={form.sourceId} onChange={e => {
+              setForm({ ...form, sourceId: e.target.value }); setSelectedTargets([]);
+            }}><option value="" disabled>Chọn nguồn</option>{sources.map(s => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}</select></div>
+            <fieldset className={styles.full}>
+              <legend>Tài khoản đích</legend>
+              {!availableTargets.length && <p className="muted">Nguồn này chưa có đích mới để chọn.</p>}
+              {availableTargets.map(target => <Enabled key={target.id} checked={targetIds.includes(target.id)}
+                onChange={checked => setSelectedTargets(previous => checked
+                  ? [...previous, target.id] : previous.filter(value => value !== target.id))}>
+                {target.code} · {target.name}{target.connector === 'fb-extension' && !target.extension?.installationId ? ' · Chưa ghép Chrome' : !target.enabled ? ' · Đang tắt' : ''}
+              </Enabled>)}
+            </fieldset>
           </>}
           <div className="field"><label htmlFor={id + '-review'}>Chế độ duyệt bài mới</label><select id={id + '-review'} value={form.reviewMode} onChange={e => setForm({ ...form, reviewMode: e.target.value as MappingT['reviewMode'] })}><option value="AUTO">Tự động nếu đạt kiểm tra</option><option value="MANUAL">Luôn duyệt tay</option></select></div>
           <div className="field"><label htmlFor={id + '-window'}>Thời gian cho phép đăng muộn (phút)</label><input id={id + '-window'} type="number" min={1} max={59} required value={form.lateWindowMin || ''} onChange={e => setForm({ ...form, lateWindowMin: Number(e.target.value) })} /></div>
-          <Enabled checked={form.enabled} onChange={enabled => setForm({ ...form, enabled })}>Bật luồng A → B</Enabled>
+          <Enabled checked={form.enabled} onChange={enabled => setForm({ ...form, enabled })}>Bật luồng đăng</Enabled>
         </div>
         <p className={styles.hint}>Ví dụ cửa sổ {form.lateWindowMin || 15} phút cho phép lượt 09:00 bắt đầu đến {form.lateWindowMin > 0 && form.lateWindowMin < 60 ? '09:' + String(form.lateWindowMin).padStart(2, '0') : 'khi hết cửa sổ'}.</p>
         <details className={styles.advanced}>
@@ -322,7 +338,7 @@ export function MappingForm({ mapping, sources, targets, mappings, onCreated }: 
             <Enabled checked={form.strictOrder} onChange={strictOrder => setForm({ ...form, strictOrder })}>Chờ bài cũ hơn trước khi đăng bài mới</Enabled>
           </div>
         </details>
-        <div className={styles.formActions}><button className="primary" type="submit" disabled={sub.pending || !form.sourceId || !targetId}>{sub.pending ? 'Đang lưu…' : mapping ? 'Lưu luồng' : 'Tạo luồng'}</button></div>
+        <div className={styles.formActions}><button className="primary" type="submit" disabled={sub.pending || !form.sourceId || (!mapping && !targetIds.length)}>{sub.pending ? 'Đang lưu…' : mapping ? 'Lưu luồng' : 'Tạo luồng cho đích đã chọn'}</button></div>
         <Feedback state={sub} />
       </form>
     </Panel>

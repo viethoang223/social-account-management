@@ -12,6 +12,7 @@ import { createLogger, initObservability } from '@seedingsys/observability';
 import { createBoss, work } from '@seedingsys/queue';
 import { createStore } from '@seedingsys/storage';
 import { handleAssetFetch, type MediaCtx } from './index';
+import { instagramMediaReader } from './instagram-media';
 
 /**
  * worker-media: asset.fetch now; media.prepare (FFprobe/FFmpeg transcode with its own CPU cap)
@@ -32,6 +33,7 @@ async function main() {
   registry.addReader(new FbPublicReadConnector(fbOpts));
   registry.addReader(new FbPublicReadConnector(fbOpts, 'fb-session'));
   registry.addReader(new FbGraphReadConnector(fbGraphOptionsFromEnv()));
+  registry.addReader(instagramMediaReader);
   const ctx: MediaCtx = { db, clock: systemClock, log, actor: `worker-media:${cfg.WORKER_NAME}`, registry, store, maxFetchAttempts: 5 };
   const boss = await createBoss(cfg.DATABASE_URL, log);
   await work(boss, Q.AssetFetch, 4, log, (p) => handleAssetFetch(ctx, p).then(() => undefined));

@@ -1,14 +1,14 @@
 /**
- * Idempotent pilot seed: A1–A5 → B1–B5 (1:1), one browser worker host, profiles pinned to it.
+ * Idempotent pilot seed: N1–N5 → B1–B5 (1:1), one browser worker host, profiles pinned to it.
  *   APP_ENV=local      → FakeConnector, fake platform file, capability checks pre-certified
  *   APP_ENV=pilot-test → fb-web, register the bundled connector release
- * Real URLs/IDs for A/B are filled in through the API or env (SEED_A1_REF=..., SEED_B1_ID=...).
+ * Real URLs/IDs are filled in through the API or env (SEED_N1_REF=..., SEED_B1_ID=...).
  */
 import { resolve } from 'node:path';
 import { loadConfig } from '@seedingsys/config';
 import { FakePlatform } from '@seedingsys/connectors-fake';
 import { FB_WEB_VERSION } from '@seedingsys/connectors-fb-web';
-import { CONTENT_TYPES } from '@seedingsys/contracts';
+import { CONTENT_TYPES, legacySourceCode } from '@seedingsys/contracts';
 import { createDb } from '@seedingsys/db';
 
 async function main() {
@@ -32,11 +32,12 @@ async function main() {
   const platform = local ? new FakePlatform({ file: resolve(cfg.FAKE_PLATFORM_FILE) }) : null;
 
   for (let i = 1; i <= n; i++) {
-    const ref = process.env[`SEED_A${i}_REF`] ?? `A${i}`;
+    const code = `N${i}`;
+    const ref = process.env[`SEED_${code}_REF`] ?? process.env[`SEED_${legacySourceCode(code)}_REF`] ?? code;
     const ext = process.env[`SEED_B${i}_ID`] ?? `fb-B${i}`;
     const s = await db.source.upsert({
-      where: { code: `A${i}` },
-      create: { code: `A${i}`, name: `Nguồn A${i}`, externalRef: ref, connector },
+      where: { code },
+      create: { code, name: `Nguồn ${code}`, externalRef: ref, connector },
       update: {},
     });
     const t = await db.targetAccount.upsert({
@@ -63,7 +64,7 @@ async function main() {
           update: {},
         });
       }
-      platform!.ensureSource(ref);
+      platform!.ensureSource(s.externalRef);
       platform!.ensureAccount(ext);
     }
   }

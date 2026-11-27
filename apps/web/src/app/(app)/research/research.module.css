@@ -1,8 +1,14 @@
 .workspace { display: grid; gap: 1rem; max-width: 70rem; }
 .enqueue, .job { border: 1px solid var(--border, #d9dce1); border-radius: .75rem; padding: 1rem; }
-.enqueue { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(12rem, auto) auto; gap: .75rem; align-items: end; }
+.enqueue { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(12rem, auto); gap: .75rem; align-items: end; }
 .enqueue label, .importForm > label:first-child { display: grid; gap: .375rem; }
+.enqueue > button { justify-self: start; }
 .enqueue p { grid-column: 1 / -1; margin: 0; }
+.profileControls { display: flex; align-items: end; gap: .5rem; flex-wrap: wrap; min-width: 0; }
+.profileControls label { flex: 1 1 13rem; min-width: 0; }
+.profileControls select { width: 100%; }
+.profileList { display: grid; gap: .6rem; list-style: none; padding: 0; margin: 0; }
+.profileList li { display: flex; gap: .25rem 1rem; flex-wrap: wrap; justify-content: space-between; }
 .job { margin-block-end: .85rem; }
 .job h2, .results p { margin: 0; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: .625rem; margin-block: .55rem; }

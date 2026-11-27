@@ -17,6 +17,8 @@ export const QUEUE_SETTINGS: Record<QueueName, Omit<PgBoss.Queue, 'name'>> = {
   // A reply waits for its parent through retries: the handler gives up after COMMENT_PUBLISH_RETRIES.
   [Q.CommentPublish]: { policy: 'standard', retryLimit: COMMENT_PUBLISH_RETRIES, retryDelay: 30, expireInSeconds: 4 * 60 },
   [Q.AssetFetch]: { policy: 'standard', retryLimit: 5, retryDelay: 30, retryBackoff: true, expireInSeconds: 15 * 60 },
+  [Q.InstagramBatchImport]: { policy: 'standard', retryLimit: 5, retryDelay: 10, retryBackoff: true, expireInSeconds: 120 },
+  [Q.InstagramBatchPublish]: { policy: 'standard', retryLimit: 4, retryDelay: 15, expireInSeconds: 120 },
   [Q.ContentRewrite]: { policy: 'standard', retryLimit: 2, retryDelay: 20, retryBackoff: true, expireInSeconds: 5 * 60 },
   [Q.ContentValidate]: { policy: 'standard', retryLimit: 1, retryDelay: 10, expireInSeconds: 5 * 60 },
   [Q.MediaPrepare]: { policy: 'standard', retryLimit: 2, retryDelay: 60, expireInSeconds: 60 * 60 },

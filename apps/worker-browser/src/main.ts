@@ -17,6 +17,7 @@ import { DEFAULT_BROWSER_SETTINGS, handleAgentRecover, handlePublish, handleReco
 import { handleCommentScan } from './handlers/comment-scan';
 import { handleCommentPublish } from './handlers/comment-publish';
 import { handleProfileSync } from './handlers/profile-sync';
+import { startChromeLauncher } from './chrome-launcher';
 
 async function main() {
   const cfg = loadConfig();
@@ -84,6 +85,7 @@ async function main() {
     await work(boss, queue, 1, log, (p, job) => retryable(() => publishers.run(() => handleReconcile(ctx, p, job.retryCount >= retryLimit))));
   }
   await work(boss, Q.AgentRecover, 1, log, (p) => handleAgentRecover(ctx, p));
+  const stopChromeLauncher = startChromeLauncher(ctx);
 
   const hb = setInterval(() => {
     void db.workerNode.update({ where: { id: node.id }, data: { lastHeartbeatAt: clock.now() } }).catch((err) => log.error({ err }, 'heartbeat failed'));
@@ -91,6 +93,7 @@ async function main() {
 
   log.info({ env: cfg.APP_ENV, node: nodeName }, 'worker-browser started');
   const shutdown = async () => {
+    stopChromeLauncher();
     clearInterval(hb);
     await boss.stop({ graceful: true, timeout: 60_000 });
     await db.$disconnect();

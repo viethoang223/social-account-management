@@ -58,7 +58,7 @@ Worker đăng các định dạng được bật trong `FB_ENABLED_FORMATS` vớ
 6. Đặt `FB_ENABLED_FORMATS` theo các định dạng cần đăng trên máy worker rồi bật lại `worker-browser`.
 7. Chỉ khi đã soak ≥7 ngày ở “Chỉ mình tôi” mới cân nhắc đổi đối tượng xem sang thật và `APP_ENV=pilot-live`.
 
-## Phía đọc (nguồn A)
+## Nguồn nội dung
 
 Chọn **Cách lấy bài** ở trang **Quản trị luồng đăng**.
 
@@ -66,23 +66,23 @@ Chọn **Cách lấy bài** ở trang **Quản trị luồng đăng**.
 |---|---|---|
 | `fb-public` | Quét bài của chủ trang qua bảng tin Facebook dành cho khách | URL trực tiếp của trang cá nhân hoặc fanpage, ví dụ `https://www.facebook.com/profile.php?id=123` hoặc `https://www.facebook.com/ten.trang` |
 | `fb-session` | Quét bài của chủ trang bằng phiên Facebook của đích trong luồng | URL nguồn và đúng một đích Facebook đang bật, có hồ sơ trình duyệt đã đăng nhập |
-| `fb-web` | Đọc **trang cá nhân của chính tài khoản đang đăng nhập** trong profile trình duyệt của nguồn | Đăng nhập một lần: `pnpm fb:login A1`. "Địa chỉ / ID nguồn" = ID số (hoặc tên người dùng) của chính tài khoản đó |
+| `fb-web` | Đọc **trang cá nhân của chính tài khoản đang đăng nhập** trong profile trình duyệt của nguồn | Đăng nhập một lần bằng `pnpm fb:login N1`. Dùng UID hoặc tên người dùng của tài khoản đó làm địa chỉ nguồn. |
 | `manual` | Người vận hành nhập bài ở trang **Nhập bài** | Không |
-| `fb-graph` | Graph API chính thức (Page bạn quản trị, hoặc `me`) | Token trong `FB_GRAPH_TOKEN_A1`. Phân trang bài và bình luận đã kiểm thử với phản hồi API giả lập. |
+| `fb-graph` | Graph API chính thức (Page bạn quản trị, hoặc `me`) | Token trong `FB_GRAPH_TOKEN_N1`. Phân trang bài và bình luận đã kiểm thử với phản hồi API giả lập. |
 
-### Quét nguồn công khai và đăng theo ánh xạ A1 → B1
+### Quét nguồn công khai và đăng theo luồng N1 → B1
 
-1. Chọn **Luồng A → B** và mở **A1 → B1**. Tại **Nguồn A1**, chọn **Facebook công khai**, nhập URL, đặt chu kỳ, bật nguồn và bấm **Lưu nguồn**.
+1. Chọn **Luồng đăng** và mở **N1 → B1**. Tại **Nguồn N1**, chọn **Facebook công khai**, nhập URL, đặt chu kỳ, bật nguồn và bấm **Lưu nguồn**.
 2. Bấm **Quét ngay** để gửi lượt đọc cho worker và xem kết quả trong phần nguồn. Facebook công khai đưa từng bài tìm được vào luồng xử lý từ lượt đầu. Facebook có thể đổi mã `pfbid` của cùng một bài giữa các lượt đọc, nên bài trùng được nhận diện theo ID bài, rồi theo mã ảnh/video, rồi theo caption + thời điểm đăng; mã mới được lưu làm bí danh của bài cũ (kể cả bài trong thùng rác). Trình quét dùng phiên khách tạm thời. B1 sử dụng phiên đăng đã thiết lập cho tài khoản đích.
 3. Tại **Duyệt và lịch đăng**, bật luồng và chọn cách duyệt, thời gian cho phép đăng muộn, hiệu lực bài và thứ tự hàng chờ. Tại **Lịch & backlog**, bấm **Đăng ngay** cạnh một bài sẵn sàng để gửi job cho worker. Lịch tự động vẫn chọn bài vào lượt đầu giờ.
 
-Nếu trang không mở được ở chế độ khách, chọn **Facebook qua tài khoản đích** ở nguồn A1 trong luồng **A1 → B1**. Worker kiểm tra đúng danh tính B1 trước khi mở URL A1. Phiên B1 xử lý từng việc một, nên yêu cầu quét sẽ chờ lượt sau nếu B1 đang bận. Khi phiên hết hạn, đăng nhập lại bằng `pnpm fb:login B1`. Ảnh hoặc video mà phiên B1 chưa tải được vẫn ở Duyệt bài.
+Nếu trang không mở được ở chế độ khách, chọn **Facebook qua tài khoản đích** ở nguồn N1 trong luồng **N1 → B1**. Worker kiểm tra đúng danh tính B1 trước khi mở URL nguồn. Phiên B1 xử lý từng việc một, nên yêu cầu quét sẽ chờ lượt sau nếu B1 đang bận. Khi phiên hết hạn, đăng nhập lại bằng `pnpm fb:login B1`. Ảnh hoặc video mà phiên B1 chưa tải được vẫn ở Duyệt bài.
 
 PostgreSQL lưu ID bài, permalink, caption, phiên bản và manifest media. Với album “+N”, trình quét mở bộ ảnh công khai và đối chiếu số lượng trước khi cho đăng. Worker media lưu ảnh và video MP4 đầy đủ vào R2 theo checksum khi `STORAGE_DRIVER=r2`. Album chưa tải đủ hoặc video chỉ có luồng phát sẽ được giữ để xử lý.
 
 - Nguồn **Facebook công khai** dùng caption gốc theo mặc định. Chọn **Tự động nếu đạt kiểm tra** để bài đủ dữ liệu đi thẳng vào Backlog. Nút **Viết lại bằng AI** chỉ được dùng khi chọn ở màn hình Duyệt bài.
 - Chọn **Lưu caption** ở Duyệt bài nếu cần lưu sửa đổi trước khi duyệt, hoặc **Sửa caption** ở Backlog trước khi bấm **Đăng ngay**. Nếu Facebook chỉ cung cấp một phần album hoặc không trả tệp video cho khách, dùng **Bổ sung media gốc** để tải lại toàn bộ ảnh theo thứ tự hoặc một video. Bài vẫn giữ ID nguồn cũ.
-- Sau khi triển khai, kiểm tra Dashboard thấy đủ worker và dùng **Quét ngay** trên A1. Đối chiếu caption, số ảnh và khả năng xem video trong Duyệt bài trước khi thử **Đăng ngay** lên B1 ở chế độ **Chỉ mình tôi**.
+- Sau khi triển khai, kiểm tra Dashboard thấy đủ worker và dùng **Quét ngay** trên N1. Đối chiếu caption, số ảnh và khả năng xem video trong Duyệt bài trước khi thử **Đăng ngay** lên B1 ở chế độ **Chỉ mình tôi**.
 
 Giới hạn cố ý của `fb-web` khi đọc:
 - Chỉ đọc `/me` và chỉ khi tài khoản đang đăng nhập **đúng là** nguồn đã khai; sai tài khoản thì dừng và báo lỗi. Không mở trang của người khác.

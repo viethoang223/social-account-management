@@ -244,7 +244,9 @@ export async function handlePublish(ctx: BrowserCtx, p: { publicationId: string;
     if (typeof raw?.expectedPhotoCount === 'number' && snapshot.media.filter(asset => asset.kind === 'image').length !== raw.expectedPhotoCount) {
       throw new StopPreCommit('FAILED_CONFIRMED', 'ALBUM_MANIFEST_INCOMPLETE');
     }
-    if (pub0.contentType === 'MULTI_PHOTO' && snapshot.media.length < 2) throw new StopPreCommit('FAILED_CONFIRMED', 'ALBUM_MANIFEST_INCOMPLETE', true);
+    if (['MULTI_PHOTO', 'MEDIA_ALBUM'].includes(pub0.contentType) && snapshot.media.length < 2) {
+      throw new StopPreCommit('FAILED_CONFIRMED', 'ALBUM_MANIFEST_INCOMPLETE', true);
+    }
     if ((pub0.contentType === 'VIDEO' || pub0.contentType === 'REEL') && snapshot.media.filter((m) => m.kind === 'video').length !== 1) {
       throw new StopPreCommit('FAILED_CONFIRMED', 'VIDEO_MANIFEST_INVALID', true);
     }

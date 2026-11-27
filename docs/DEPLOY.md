@@ -1,6 +1,6 @@
 # Triển khai SeedingSys
 
-> Connector đăng bài `fb-web` dùng các định dạng bật trong `FB_ENABLED_FORMATS`. Có thể chạy kiểm thử tùy chọn ở chế độ “Chỉ mình tôi”. Nguồn A có thể dùng `fb-public` để đọc trang cá nhân hoặc fanpage truy cập được ở chế độ khách. [Hướng dẫn cấu hình Facebook](FB-WEB.md)
+> Connector đăng bài `fb-web` dùng các định dạng bật trong `FB_ENABLED_FORMATS`. Có thể chạy kiểm thử tùy chọn ở chế độ “Chỉ mình tôi”. Nguồn nội dung có thể dùng `fb-public` để đọc trang cá nhân hoặc fanpage truy cập được ở chế độ khách. [Hướng dẫn cấu hình Facebook](FB-WEB.md)
 
 ## 1. Chọn cách chạy
 
@@ -35,7 +35,7 @@ node scripts/gen-secrets.mjs --print
 
 Dán các mã vừa in vào `API_TOKENS='{"<mã admin>":"admin","<mã duyệt>":"reviewer","<mã vận hành>":"operator"}'`, rồi chạy lại `pnpm dev:all`.
 
-Thêm bài thử: `pnpm fake post A1 "nội dung"`.
+Thêm bài thử bằng `pnpm fake post N1 "nội dung"`.
 
 ### 2.1 Chạy thường trực trên máy Windows này (không Docker)
 
@@ -74,9 +74,17 @@ powercfg /change hibernate-timeout-ac 0
 ```
 
 - Cho máy khác trong LAN vào (PowerShell **Run as administrator**): `New-NetFirewallRule -DisplayName "SeedingSys web" -Direction Inbound -Protocol TCP -LocalPort 3000 -Profile Private -Action Allow`, rồi mở `http://<IP máy này>:3000`.
-- Truy cập từ ngoài: dùng Tailscale (cài trên máy này và máy người dùng) hoặc Cloudflare Tunnel. Không mở cổng trên router.
+- Từ điện thoại hoặc máy ở mạng khác, dùng Tailscale Serve để mở dashboard qua HTTPS trong mạng riêng. Xem mục bên dưới.
 - Settings → Windows Update → *Change active hours*: tránh để máy tự khởi động lại giữa giờ đăng. Sau khi khởi động lại, hệ thống chỉ chạy lên khi có người **đăng nhập** Windows.
 - Đổi mã đăng nhập mặc định trước khi cho người khác dùng (xem trên), rồi `pnpm server:stop` → `Start-ScheduledTask SeedingSys`.
+
+### Mở dashboard từ điện thoại hoặc máy khác
+
+1. Cài và đăng nhập Tailscale trên máy chạy dashboard. Trong PowerShell mở bằng quyền quản trị, chạy `tailscale serve --bg 3030` nếu dashboard dùng cổng `3030`. Nếu Tailscale yêu cầu bật HTTPS cho mạng riêng, dùng liên kết mà lệnh đưa ra, rồi chạy lại. `tailscale serve status` hiển thị URL HTTPS của máy chủ.
+2. Cài Tailscale trên điện thoại hoặc máy điều khiển, đăng nhập vào cùng mạng Tailscale và bật kết nối. Mở URL HTTPS ở bước 1 trong trình duyệt rồi đăng nhập bằng mã truy cập dashboard. Lấy mã từ mục có vai trò `operator` hoặc `admin` trong `API_TOKENS` của tệp `.env` trên máy chủ. Dùng chính URL HTTPS đó trên Wi-Fi khác hoặc 4G/5G. Giữ máy chủ và dịch vụ SeedingSys chạy để mở dashboard.
+3. Với máy Asus lưu các via, cài Tailscale vào cùng mạng và cài SeedingSys Profile Connector trong từng Chrome profile cần nhận việc. Điền sẵn URL HTTPS của máy chủ vào `defaultDashboardOrigin` trong `extension/popup.js` của bản cài dành cho Asus, rồi ghép từng mã profile từ dashboard dùng chung. Kiểm tra đúng mã B, UID và trạng thái online trước khi giao việc. Thiết bị điều khiển dùng trình duyệt. Thiết bị chạy việc giữ Chrome với đúng tài khoản đã ghép.
+
+[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) · [Kết nối thiết bị từ xa](https://tailscale.com/docs/use-cases/personal-or-at-home-use/access-nas-media-file-servers)
 
 ### 2.2 Chuyển sang máy Windows khác
 

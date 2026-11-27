@@ -6,9 +6,10 @@ import { AutoRefresh } from '@/components/client';
 import { Badge, Empty } from '@/components/ui';
 import { fmtTime, label } from '@/lib/format';
 import { ImportExtensionTargets, MappingForm, Panel, SourceForm, TargetForm, sourceMethods, sourceStatus, type Capabilities, type MappingT, type SourceT, type TargetT } from './SettingsForms';
+import { ParentAccounts, type ParentAccount } from './ParentAccounts';
 import styles from './settings.module.css';
 
-const views = { flows: 'Luồng A → B', sources: 'Nguồn quét', targets: 'Tài khoản đích' };
+const views = { flows: 'Luồng đăng', sources: 'Nguồn nội dung', parents: 'Tài khoản A', targets: 'Tài khoản B' };
 type View = keyof typeof views;
 
 function Readiness({ capabilities }: { capabilities: Capabilities }) {
@@ -28,8 +29,9 @@ function Readiness({ capabilities }: { capabilities: Capabilities }) {
   </details>;
 }
 
-export function SettingsWorkspace({ sources, targets, mappings, capabilities }: { sources: SourceT[]; targets: TargetT[]; mappings: MappingT[]; capabilities: Capabilities }) {
-  const [view, setView] = useState<View>('flows');
+export function SettingsWorkspace({ sources, targets, mappings, capabilities, parents, initialView: view, initialTarget }: {
+  sources: SourceT[]; targets: TargetT[]; mappings: MappingT[]; capabilities: Capabilities; parents: ParentAccount[]; initialView: View; initialTarget?: string;
+}) {
   const bySource = new Map(sources.map(s => [s.id, s]));
   const byTarget = new Map(targets.map(t => [t.id, t]));
   const viewsOfFlow = mappings.flatMap(m => {
@@ -39,21 +41,20 @@ export function SettingsWorkspace({ sources, targets, mappings, capabilities }: 
   }).sort((a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true }));
   const [flowId, setFlowId] = useState(viewsOfFlow[0]?.mapping.id ?? 'new');
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? 'new');
-  const [targetId, setTargetId] = useState(targets[0]?.id ?? 'new');
+  const [targetId, setTargetId] = useState(initialTarget ?? targets[0]?.id ?? 'new');
   const activeFlow = viewsOfFlow.find(f => f.mapping.id === flowId);
 
   return <div className={styles.workspace}>
-    <AutoRefresh seconds={15} />
+    {view !== 'parents' && <AutoRefresh seconds={15} />}
     <header className={styles.heading}>
       <div>
-        <h1>Quản trị luồng đăng</h1>
-        <p>Thiết lập nguồn Facebook, tài khoản đích và cách duyệt bài.</p>
+        <h1>{view === 'flows' ? 'Cấu hình luồng đăng' : views[view]}</h1>
       </div>
       <Link className={styles.secondaryAction} href="/schedule">Mở lịch &amp; backlog <span aria-hidden>↗</span></Link>
     </header>
     <nav className={styles.tabs} aria-label="Mục quản trị">
       {(Object.entries(views) as Array<[View, string]>).map(([key, title]) =>
-        <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}>{title}</button>)}
+        <Link key={key} href={key === 'flows' ? '/settings' : `/settings?view=${key}`} aria-current={view === key ? 'page' : undefined}>{title}</Link>)}
     </nav>
     {view === 'flows' && <>
       <ol className={styles.stages} aria-label="Các bước xử lý bài">
@@ -86,18 +87,18 @@ export function SettingsWorkspace({ sources, targets, mappings, capabilities }: 
               <SourceForm key={activeFlow.source.id} source={activeFlow.source} />
               <TargetForm key={activeFlow.target.id} target={activeFlow.target} capabilities={capabilities} />
             </div>
-            <MappingForm key={activeFlow.mapping.id} {...{ sources, targets, mappings }} mapping={activeFlow.mapping} onCreated={setFlowId} />
+            <MappingForm key={activeFlow.mapping.id} {...{ sources, targets, mappings }} mapping={activeFlow.mapping} />
             {(mappings.filter(m => m.sourceId === activeFlow.source.id).length > 1 || mappings.filter(m => m.targetId === activeFlow.target.id).length > 1)
               && <p className={styles.hint}>Các luồng dùng chung nguồn hoặc đích sẽ dùng chung cấu hình của nguồn hoặc đích đó.</p>}
           </> : flowId === 'new' ? <>
             {(!sources.length || !targets.length) && <Panel title="Chuẩn bị nguồn và đích">
               <p className="muted">Tạo nguồn và tài khoản đích trước khi ghép thành luồng.</p>
               <div className="actions">
-                {!sources.length && <button type="button" onClick={() => { setSourceId('new'); setView('sources'); }}>Thêm nguồn</button>}
-                {!targets.length && <button type="button" onClick={() => { setTargetId('new'); setView('targets'); }}>Thêm đích</button>}
+                {!sources.length && <Link className="btn" href="/settings?view=sources">Thêm nguồn</Link>}
+                {!targets.length && <Link className="btn" href="/settings?view=targets">Thêm đích</Link>}
               </div>
             </Panel>}
-            <MappingForm {...{ sources, targets, mappings }} onCreated={setFlowId} />
+            <MappingForm {...{ sources, targets, mappings }} />
           </> : <Empty>Đang tải luồng vừa tạo…</Empty>}
         </div>
       </div>
@@ -108,6 +109,7 @@ export function SettingsWorkspace({ sources, targets, mappings, capabilities }: 
       </select></div>
       <SourceForm key={sourceId} source={bySource.get(sourceId)} />
     </div>}
+    {view === 'parents' && <div className={styles.resource}><ParentAccounts initialAccounts={parents} /></div>}
     {view === 'targets' && <div className={styles.resource}>
       <ImportExtensionTargets />
       <div className={styles.resourcePicker}><label htmlFor="admin-target">Tài khoản đích</label><select id="admin-target" value={targetId} onChange={e => setTargetId(e.target.value)}>

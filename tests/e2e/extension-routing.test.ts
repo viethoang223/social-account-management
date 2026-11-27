@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ExtensionController } from '../../apps/api/src/extension.controller';
+import { ConfigController } from '../../apps/api/src/config.controller';
 import { ExtensionPublishConnector } from '../../apps/worker-browser/src/runtime/extension';
 import { handlePublish, handleReconcile } from '../../apps/worker-browser/src';
 import { dispatchBacklogItem, setControl } from '@seedingsys/db';
@@ -14,6 +15,21 @@ afterEach(async () => { await h.close(); });
 const admin = { role: 'admin', actor: 'test-admin' } as const;
 const uid1 = '10001001';
 const uid2 = '10001002';
+
+it('creates mappings for checked targets in one batch and preserves existing mappings', async () => {
+  const config = new ConfigController(h.db, h.clock);
+  const sourceId = h.ids.sources.A1;
+  const original = await h.db.sourceTargetMapping.findUniqueOrThrow({
+    where: { sourceId_targetId: { sourceId, targetId: h.ids.targets.B1 } },
+  });
+  await expect(config.createMappings({ sourceId, targetIds: [h.ids.targets.B1, h.ids.targets.B2, h.ids.targets.B2],
+    reviewMode: 'MANUAL' }, admin)).resolves.toMatchObject({
+    created: [{ sourceId, targetId: h.ids.targets.B2, reviewMode: 'MANUAL' }], skipped: 1,
+  });
+  await expect(h.db.sourceTargetMapping.findUnique({ where: { id: original.id } })).resolves.toMatchObject({
+    reviewMode: original.reviewMode, enabled: original.enabled,
+  });
+});
 
 it('imports unique UIDs as disabled targets and preserves existing accounts', async () => {
   const controller = new ExtensionController(h.db, h.clock);
@@ -88,6 +104,68 @@ it('pins two accounts, rejects switched profiles, and keeps each command in its 
   await expect(handlePublish(h.browser, { publicationId: pub1, jobVersion: 1 })).resolves.toBe('STALE');
   expect(await h.db.extensionCommand.count({ where: { action: 'commit', targetId: h.ids.targets.B1 } })).toBe(1);
   await expect(handleReconcile(h.browser, { publicationId: pub1 })).resolves.toBe('NEEDS_OPERATOR');
+  const queued = await controller.verifyOldPublication(pub1);
+  await expect(controller.verifyOldPublication(pub1)).resolves.toEqual(queued);
+  await expect(call1({ action: 'poll' })).resolves.toMatchObject({ command: null });
+  await expect(call2({ action: 'poll', publicationVerifyProtocol: 1 })).resolves.toMatchObject({ command: null });
+  const readback = await call1({ action: 'poll', publicationVerifyProtocol: 1 });
+  const command = 'command' in readback ? readback.command : null;
+  if (!command || !('from' in command)) throw new Error('Missing read-only command');
+  expect(command).toMatchObject({ id: queued.commandId, action: 'publication-verify' });
+  await expect(call1({ action: 'authorize', commandId: command.id })).rejects.toMatchObject({ status: 409 });
+  const permalink = 'https://www.facebook.com/permalink.php?id=' + uid1 + '&story_fbid=341';
+  const candidate = { uid: uid1, caption: command.caption, createdAt: command.from + 10_000, permalink };
+  const completed = (id: string, candidates: object[], reopened: boolean) => ({ action: 'publication-verify-complete',
+    commandId: id, report: { candidates, reopened } });
+  await expect(call2(completed(command.id, [candidate], true))).resolves.toMatchObject({ outcome: 'STALE' });
+  await expect(call1(completed(command.id, [candidate, { ...candidate, permalink: permalink.replace('341', '342') }], false)))
+    .resolves.toMatchObject({ outcome: 'AMBIGUOUS' });
+  await expect(h.db.publication.findUnique({ where: { id: pub1 } })).resolves.toMatchObject({ status: 'NEEDS_OPERATOR', permalink: null });
+  const retry = await controller.verifyOldPublication(pub1);
+  await expect(call1({ action: 'poll', publicationVerifyProtocol: 1 })).resolves.toMatchObject({ command: { id: retry.commandId } });
+  await expect(call1(completed(retry.commandId, [{ ...candidate, createdAt: command.from - 1 }], true))).resolves.toMatchObject({ outcome: 'UNCONFIRMED' });
+  const final = await controller.verifyOldPublication(pub1);
+  await expect(call1({ action: 'poll', publicationVerifyProtocol: 1 })).resolves.toMatchObject({ command: { id: final.commandId } });
+  await expect(call1(completed(final.commandId, [candidate], true))).resolves.toMatchObject({ outcome: 'VERIFIED' });
+  await expect(h.db.publication.findUnique({ where: { id: pub1 } })).resolves.toMatchObject({ status: 'PUBLISHED_VERIFIED', permalink,
+    externalPostId: '341', publishTries: 1, lastReason: null });
+  await expect(h.db.operatorTask.findFirst({ where: { publicationId: pub1, kind: 'CONFIRM_RESULT' } }))
+    .resolves.toMatchObject({ status: 'DONE' });
   await controller.revoke(h.ids.targets.B1, admin);
   await expect(call1({ action: 'poll' })).rejects.toMatchObject({ status: 401 });
+});
+
+it('routes a public draft only to the updated profile and verifies the one posted link', async () => {
+  const { call1 } = await setup();
+  const targets = new ConfigController(h.db, h.clock);
+  await expect(targets.updateTarget(h.ids.targets.B1, { audience: 'PUBLIC' }, admin)).resolves.toMatchObject({ audience: 'PUBLIC' });
+  const { first } = await readyPosts();
+  const poll = () => call1({ action: 'poll', publishProtocol: 2 });
+  await poll();
+  const publicationId = await dispatchBacklogItem(h.core, first.id);
+  const publish = handlePublish(h.browser, { publicationId, jobVersion: 1 });
+  const next = async (action: string) => {
+    await vi.waitFor(async () => {
+      expect(await h.db.extensionCommand.count({ where: { publicationId, action } })).toBe(1);
+    }, { timeout: 5_000 });
+    await expect(call1({ action: 'poll' })).resolves.toMatchObject({ command: null });
+    const response = await poll();
+    expect(response).toMatchObject({ command: { action, audience: 'PUBLIC' } });
+    if (!('command' in response) || !response.command) throw new Error('Missing publication command');
+    return response.command.id;
+  };
+  const prepare = await next('prepare');
+  await call1({ action: 'complete', commandId: prepare, outcome: 'prepared' });
+  const commit = await next('commit');
+  await expect(call1({ action: 'authorize', commandId: commit })).resolves.toMatchObject({ lifetimeMs: 5000 });
+  await expect(call1({ action: 'authorize', commandId: commit })).rejects.toMatchObject({ status: 409 });
+  const permalink = 'https://www.facebook.com/' + uid1 + '/posts/253';
+  await expect(call1({ action: 'complete', commandId: commit, outcome: 'clicked',
+    receipt: { externalId: '253', permalink: permalink + '?comment_id=6' } })).rejects.toMatchObject({ status: 409 });
+  await call1({ action: 'complete', commandId: commit, outcome: 'clicked', verification: 'reopened-post',
+    receipt: { externalId: '253', permalink } });
+  await expect(publish).resolves.toBe('PUBLISHED_VERIFIED');
+  await expect(h.db.publication.findUnique({ where: { id: publicationId } })).resolves.toMatchObject({
+    status: 'PUBLISHED_VERIFIED', externalPostId: '253', permalink,
+  });
 });

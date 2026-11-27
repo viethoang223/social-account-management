@@ -159,19 +159,21 @@ export async function dispatchSlot(ctx: DispatchContext, slotId: string): Promis
 }
 
 export async function dispatchBacklogItem(ctx: DispatchContext, variantId: string): Promise<string> {
-  return ctx.db.$transaction(async t => {
-    const variant = await t.contentVariant.findUnique({ where: { id: variantId }, select: { targetId: true } });
-    if (!variant) throw new BacklogDispatchError('ITEM_UNAVAILABLE');
-    const { targetId } = variant;
-    await t.$queryRaw`SELECT id FROM target_accounts WHERE id = ${targetId}::uuid FOR UPDATE`;
-    const now = ctx.clock.now();
-    let ms = now.getTime();
-    while (ms % HOUR === 0 || await t.publicationSlot.findUnique({ where: { targetId_slotAt: { targetId, slotAt: new Date(ms) } }, select: { id: true } })) ms--;
-    const slot = await t.publicationSlot.create({ data: { targetId, slotAt: new Date(ms), manual: true } });
-    if (await dispatch(t, ctx, slot.id, variantId) !== 'DISPATCHED') throw new BacklogDispatchError('ITEM_UNAVAILABLE');
-    const queued = await t.publicationSlot.findUniqueOrThrow({ where: { id: slot.id }, select: { publicationId: true } });
-    return queued.publicationId!;
-  });
+  return ctx.db.$transaction(t => dispatchBacklogItemInTransaction(t, ctx, variantId));
+}
+
+export async function dispatchBacklogItemInTransaction(t: Tx, ctx: DispatchContext, variantId: string): Promise<string> {
+  const variant = await t.contentVariant.findUnique({ where: { id: variantId }, select: { targetId: true } });
+  if (!variant) throw new BacklogDispatchError('ITEM_UNAVAILABLE');
+  const { targetId } = variant;
+  await t.$queryRaw`SELECT id FROM target_accounts WHERE id = ${targetId}::uuid FOR UPDATE`;
+  const now = ctx.clock.now();
+  let ms = now.getTime();
+  while (ms % HOUR === 0 || await t.publicationSlot.findUnique({ where: { targetId_slotAt: { targetId, slotAt: new Date(ms) } }, select: { id: true } })) ms--;
+  const slot = await t.publicationSlot.create({ data: { targetId, slotAt: new Date(ms), manual: true } });
+  if (await dispatch(t, ctx, slot.id, variantId) !== 'DISPATCHED') throw new BacklogDispatchError('ITEM_UNAVAILABLE');
+  const queued = await t.publicationSlot.findUniqueOrThrow({ where: { id: slot.id }, select: { publicationId: true } });
+  return queued.publicationId!;
 }
 
 async function dispatch(t: Tx, ctx: DispatchContext, slotId: string, variantId?: string): Promise<SlotOutcome> {

@@ -1,0 +1,80 @@
+.choices, .actions {
+  display: flex;
+  gap: .65rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.choices button[aria-pressed="true"], .templates button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.templates {
+  display: grid;
+  gap: .55rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  margin-top: .8rem;
+}
+
+.templates button {
+  text-align: left;
+  padding: .75rem;
+}
+
+.templates strong {
+  display: block;
+  margin-bottom: .2rem;
+}
+
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: .85rem;
+  margin-top: 1rem;
+}
+
+.section {
+  min-width: 0;
+  margin: 0;
+  padding: .8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.section legend { font-weight: 650; padding: 0 .35rem; }
+.field { display: grid; gap: .3rem; margin-bottom: .6rem; }
+.field textarea { min-height: 4.2rem; }
+.form > .actions { grid-column: 1 / -1; }
+
+.targets {
+  min-width: 0;
+  max-height: 15rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+}
+
+.option {
+  display: flex;
+  align-items: start;
+  gap: .55rem;
+  padding: .55rem .65rem;
+  cursor: pointer;
+}
+
+.option + .option { border-top: 1px solid var(--line); }
+.option input { width: auto; min-width: auto; margin: .22rem 0 0; }
+.option small { display: block; color: var(--muted); }
+.option:has(input:checked) { background: var(--info-bg); }
+
+.assignment { border-top: 1px solid var(--line); padding: .75rem 0; }
+.assignment .actions { margin: .3rem 0; }
+.brief { white-space: pre-wrap; overflow-wrap: anywhere; }
+.links { padding-inline-start: 1.2rem; overflow-wrap: anywhere; }
+.results { max-width: 38rem; margin: .6rem 0; }
+
+@media (max-width: 850px) {
+  .form { grid-template-columns: minmax(0, 1fr); }
+}

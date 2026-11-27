@@ -1,0 +1,11 @@
+.home { max-width: 980px; margin-inline: auto; }
+.home h1 { font-size: clamp(1.65rem, 5vw, 2.15rem); letter-spacing: -.04em; margin-bottom: 1rem; }
+.lead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: clamp(1.15rem, 4vw, 1.8rem);
+  border-radius: 14px; border: 1px solid var(--line); background: var(--panel); margin-bottom: .8rem; }
+.lead h2 { font-size: 1.25rem; margin-bottom: .28rem; }
+.lead p { margin: 0; color: var(--muted); }
+.shortcuts { display:grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); }
+.shortcuts a { display:block; border:1px solid var(--line); border-radius: 12px; color:var(--text); background:var(--panel); padding:1rem; }
+.shortcuts a:hover { border-color: var(--accent); text-decoration: none; }
+.shortcuts strong { display:block; margin-bottom:.2rem; }
+.shortcuts span { color:var(--muted); }

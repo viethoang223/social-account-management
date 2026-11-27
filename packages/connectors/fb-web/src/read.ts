@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import { ConnectorError, type ReadConnector, type ReadMedia, type ReadPost, type ReadResult, type SourceRef } from '@seedingsys/connectors-core';
-import type { ContentType, IncompleteFlag } from '@seedingsys/contracts';
+import { legacySourceCode, type ContentType, type IncompleteFlag } from '@seedingsys/contracts';
 import type { FbWebOptions } from './config';
 import { CHECKPOINT_TEXT, URLS } from './selectors';
 import { FB_WEB_VERSION } from './version';
@@ -15,7 +16,7 @@ import { parseViTime } from './vi-time';
  *  - Only `/me` of the logged-in account, and only if that account IS the configured source
  *    (externalRef = numeric id or vanity name). It never opens other people's profiles.
  *  - Only posts written by the profile owner; comments and commenter names are never read.
- *  - Never logs in or passes a login wall / checkpoint: a person logs in once with `pnpm fb:login A1`.
+ *  - Never logs in or passes a login wall / checkpoint: a person logs in once with `pnpm fb:login N1`.
  *  - No stealth: plain browser, bounded scrolling, polled at the source's interval.
  *
  * Limits: feed images are the size Facebook shows on the profile (not the original upload);
@@ -106,7 +107,11 @@ export class FbWebReadConnector implements ReadConnector {
   ) {}
 
   profilePath(code: string): string {
-    return join(this.opts.profilesRoot, basename(code.replace(/\\/g, '/')).replace(/[^\w.-]/g, '_'));
+    const path = join(this.opts.profilesRoot, basename(code.replace(/\\/g, '/')).replace(/[^\w.-]/g, '_'));
+    const previousCode = legacySourceCode(code);
+    if (previousCode === code || existsSync(path)) return path;
+    const previousPath = join(this.opts.profilesRoot, previousCode);
+    return existsSync(previousPath) ? previousPath : path;
   }
 
   private now() {
@@ -137,7 +142,7 @@ export class FbWebReadConnector implements ReadConnector {
       await page.goto(`${this.opts.baseUrl}/me`, { waitUntil: 'domcontentloaded', timeout: this.opts.stepTimeoutMs * 2 });
       await page.waitForLoadState('load').catch(() => undefined);
       await this.assertOwnProfile(page, source);
-      const posts = await this.collect(page, source.code, Math.max(this.maxPosts, overlap));
+      const posts = await this.collect(page, legacySourceCode(source.code), Math.max(this.maxPosts, overlap));
       const newest = posts.reduce((m, p) => Math.max(m, p.postedAt?.getTime() ?? 0), Number((watermark as { newest?: number } | null)?.newest ?? 0));
       return { posts, nextWatermark: { newest }, incomplete: [] };
     } finally {

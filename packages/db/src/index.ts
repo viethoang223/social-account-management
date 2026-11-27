@@ -29,3 +29,6 @@ export * from './content-ops';
 export * from './dedup';
 export * from './dispatch-publication';
 export * from './comment-persona';
+export * from './instagram-batch';
+export * from './instagram-comments';
+export * from './instagram-publish';

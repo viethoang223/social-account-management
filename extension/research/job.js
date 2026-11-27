@@ -57,21 +57,26 @@ async function readOnFacebook(command, deadline, sameUid, fail, fresh = false) {
   if (!identity || identity.startsWith('post:') !== (kind === 'RESEARCH_POST') || Date.now() >= deadline || !await sameUid()) {
     return fail('URL, UID hoặc thời hạn của lượt đọc không khớp.');
   }
-  let tab, openedTab = false, stage = 'Mở tab Facebook';
+  let tab, openedTab = false, verifiedIdentity = identity, stage = 'Mở tab Facebook';
   try {
     if (!fresh) {
       const openTabs = await chrome.tabs.query({ url: 'https://www.facebook.com/*' });
       tab = openTabs.find(item => item.active && item.status === 'complete' && facebookIdentity(item.url) === identity);
     }
     if (!tab) {
-      tab = await chrome.tabs.create({ url, active: kind === 'RESEARCH_POST' });
+      tab = await chrome.tabs.create({ url, active: kind !== 'RESEARCH_PROFILE' });
       openedTab = true;
     }
     if (tab.id === undefined) return fail('Chrome không cung cấp tab cho lượt đọc.');
     const until = Math.min(deadline, Date.now() + 15_000);
     for (;;) {
       const current = await chrome.tabs.get(tab.id);
-      if (current.status === 'complete' && !current.pendingUrl && facebookIdentity(current.url) === identity) break;
+      const shown = facebookIdentity(current.url);
+      if (current.status === 'complete' && !current.pendingUrl && (shown === identity
+        || (openedTab && kind === 'PUBLISH_TIMELINE' && shown?.startsWith('profile:')))) {
+        verifiedIdentity = shown;
+        break;
+      }
       if (Date.now() >= until) {
         return fail(facebookIdentity(current.url) === identity
           ? 'Tab mở đúng bài nhưng tải quá thời gian.'
@@ -91,19 +96,19 @@ async function readOnFacebook(command, deadline, sameUid, fail, fresh = false) {
     stage = 'Đọc nội dung trang';
     const [read] = await chrome.scripting.executeScript({
       target, func: readResearch,
-      args: [kind === 'RESEARCH_POST' ? 'post' : 'profile', url, limit, deadline],
+      args: [kind === 'RESEARCH_POST' ? 'post' : kind === 'PUBLISH_TIMELINE' ? 'publication' : 'profile', url, limit, deadline, command.expectedCaption ?? null],
     });
     if (!read?.result || read.result.issue) return fail(read?.result?.issue ?? 'Trình đọc chưa nhận diện được nội dung trên trang đã mở.');
-    if (Date.now() >= deadline || facebookIdentity(read.result.url) !== identity || !await sameUid()) {
+    if (Date.now() >= deadline || facebookIdentity(read.result.url) !== verifiedIdentity || !await sameUid()) {
       return fail('Phiên đọc hoặc URL thay đổi trong lúc xử lý.');
     }
-    return read.result.value;
+    return kind === 'PUBLISH_TIMELINE' ? { ...read.result.value, profileIdentity: verifiedIdentity } : read.result.value;
   } catch {
     return fail(stage + ' không thành công.');
   } finally {
     if (openedTab && tab?.id !== undefined) {
       const current = await chrome.tabs.get(tab.id).catch(() => null);
-      if (facebookIdentity(current?.url) === identity) await chrome.tabs.remove(tab.id).catch(() => {});
+      if (facebookIdentity(current?.url) === verifiedIdentity) await chrome.tabs.remove(tab.id).catch(() => {});
     }
   }
 }
@@ -125,4 +130,31 @@ export function readCommentThread(postUrl, deadline, sameUid) {
   url.searchParams.delete('comment_id');
   url.searchParams.delete('reply_comment_id');
   return readOnFacebook({ url: url.href, kind: 'RESEARCH_POST', limit: 20 }, deadline, sameUid, () => null, true);
+}
+
+export function readPublicationTimeline(uid, deadline, sameUid, expectedCaption) {
+  const url = 'https://www.facebook.com/profile.php?id=' + encodeURIComponent(uid);
+  return readOnFacebook({ url, kind: 'PUBLISH_TIMELINE', limit: 8, expectedCaption }, deadline, sameUid, () => null, true);
+}
+
+export function findPublishedText(uid, caption, before, after, media = false) {
+  if (!before || !after) return null;
+  const normalize = value => {
+    const clean = value.replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').normalize('NFC').trim();
+    return media ? clean.replace(/\s+/g, ' ') : clean;
+  };
+  const text = normalize(caption);
+  const sameText = row => !row.captionPartial && normalize(row.body) === text;
+  if (before.rows.some(sameText)) return null;
+  const previous = new Set(before.rows.map(row => facebookIdentity(row.url)));
+  const matches = after.rows.filter(row => {
+    const identity = facebookIdentity(row.url);
+    if (!identity?.startsWith('post:') || previous.has(identity) || !sameText(row)) return false;
+    const url = new URL(row.url);
+    const owner = url.searchParams.get('id') ?? /^\/(\d+)\/posts\//.exec(url.pathname)?.[1];
+    const author = facebookIdentity(row.authorUrl);
+    return owner ? owner === uid : author === 'uid:' + uid
+      || (author?.startsWith('profile:') && author === before.profileIdentity && author === after.profileIdentity);
+  });
+  return matches.length === 1 ? { externalId: facebookIdentity(matches[0].url).slice(5), permalink: matches[0].url } : null;
 }

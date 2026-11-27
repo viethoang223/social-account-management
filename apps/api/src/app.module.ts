@@ -4,7 +4,9 @@ import { loadConfig } from '@seedingsys/config';
 import { createDb } from '@seedingsys/db';
 import { systemClock } from '@seedingsys/domain';
 import { AuthGuard } from './auth';
+import { AssignmentsController } from './assignments.controller';
 import { ConfigController } from './config.controller';
+import { ComposeController } from './compose.controller';
 import { ExtensionController } from './extension.controller';
 import { ImportController } from './import.controller';
 import { LibraryController } from './library.controller';
@@ -17,7 +19,7 @@ import { CLOCK, CONFIG, DB, STORE } from './tokens';
 const cfg = loadConfig();
 
 @Module({
-  controllers: [OpsController, ConfigController, ImportController, LibraryController, ExtensionController, PersonasController, ResearchController],
+  controllers: [OpsController, ConfigController, ImportController, LibraryController, ExtensionController, PersonasController, ResearchController, AssignmentsController, ComposeController],
   providers: [
     { provide: CONFIG, useValue: cfg },
     { provide: DB, useValue: createDb(cfg.DATABASE_URL) },

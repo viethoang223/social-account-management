@@ -1,0 +1,26 @@
+.workspace { max-width: 760px; margin-inline: auto; }
+.heading { margin: .3rem 0 1.2rem; }
+.heading h1 { font-size: clamp(1.65rem, 5vw, 2.15rem); letter-spacing: -.04em; margin: .28rem 0 0; }
+.back { color: var(--muted); font-size: .87rem; }
+.editor, .receipt { border: 1px solid var(--line); border-radius: 16px; background: var(--panel); overflow: hidden; }
+.target, .content, .footer, .receipt { padding: clamp(1rem, 3vw, 1.6rem); }
+.target, .content { border-bottom: 1px solid var(--line); }
+.editor label:not(.upload) { font-size: .9rem; font-weight: 650; color: var(--text); margin-bottom: .42rem; }
+.target select { max-width: 34rem; }
+.audience { display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; margin: .65rem 0 0; color: var(--muted); }
+.audience strong { color: var(--text); }
+.audience a { margin-left: .45rem; font-size: .85rem; }
+.content textarea { line-height: 1.65; font-size: 1rem; padding: .8rem; }
+.mediaLine, .footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .65rem; }
+.mediaLine { margin-top: .6rem; }
+.upload { color: var(--accent); cursor: pointer; font-size: .9rem; }
+.upload input { width: 1px; height: 1px; position: absolute; opacity: 0; clip-path: inset(50%); }
+.upload:focus-within { outline: 2px solid var(--accent); }
+.files { padding-left: 1rem; }
+.files li { overflow-wrap: anywhere; margin: .35rem 0; }
+.footer { justify-content: flex-end; background: var(--panel-2); }
+.footer p { flex: 1 1 16rem; }
+.footer button { min-height: 42px; padding-inline: 1.25rem; }
+.receipt h2 { font-size: 1.2rem; }
+.receipt p { color: var(--muted); }
+.receipt button { margin-left: .6rem; }

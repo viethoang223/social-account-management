@@ -8,7 +8,7 @@ import {
   type ReadResult,
   type SourceRef,
 } from '@seedingsys/connectors-core';
-import type { ContentType, IncompleteFlag } from '@seedingsys/contracts';
+import { canonicalSourceCode, legacySourceCode, type ContentType, type IncompleteFlag } from '@seedingsys/contracts';
 
 /**
  * Read connector for Facebook content the organisation OWNS, through the official Graph API:
@@ -16,8 +16,8 @@ import type { ContentType, IncompleteFlag } from '@seedingsys/contracts';
  *  - your own profile       → externalRef = "me",      token = user access token with `user_posts`
  *    (works for the app's own admins/developers/testers while the Meta app is in development mode)
  *
- * Tokens are per source, never stored in the database: FB_GRAPH_TOKEN_<CODE> (e.g. FB_GRAPH_TOKEN_A1)
- * or FB_GRAPH_TOKENS='{"A1":"..."}'. Only worker hosts that poll sources / fetch media need them.
+ * Tokens are per source, never stored in the database: FB_GRAPH_TOKEN_<CODE> (e.g. FB_GRAPH_TOKEN_N1)
+ * or FB_GRAPH_TOKENS='{"N1":"..."}'. Only worker hosts that poll sources / fetch media need them.
  */
 export interface FbGraphOptions {
   /** e.g. "v23.0". Empty = unversioned URL (the app's default API version). */
@@ -34,7 +34,7 @@ export function fbGraphOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): FbG
     try {
       Object.assign(tokens, JSON.parse(env.FB_GRAPH_TOKENS) as Record<string, string>);
     } catch {
-      throw new Error('FB_GRAPH_TOKENS must be JSON, e.g. {"A1":"EAAB..."}');
+      throw new Error('FB_GRAPH_TOKENS must be JSON, e.g. {"N1":"EAAB..."}');
     }
   }
   for (const [k, v] of Object.entries(env)) {
@@ -98,8 +98,9 @@ export class FbGraphReadConnector implements ReadConnector {
   }
 
   private token(sourceCode: string): string {
-    const t = this.opts.tokens[sourceCode.toUpperCase()];
-    if (!t) throw new ConnectorError('SOURCE_UNREADABLE', `Chưa có token Graph API cho nguồn ${sourceCode} (đặt FB_GRAPH_TOKEN_${sourceCode.toUpperCase()})`);
+    const code = canonicalSourceCode(sourceCode.toUpperCase());
+    const t = this.opts.tokens[code] ?? this.opts.tokens[legacySourceCode(code)];
+    if (!t) throw new ConnectorError('SOURCE_UNREADABLE', `Chưa có token Graph API cho nguồn ${code} (đặt FB_GRAPH_TOKEN_${code})`);
     return t;
   }
 
@@ -289,7 +290,9 @@ export class FbGraphReadConnector implements ReadConnector {
   private videoRef(a: GraphAttachment, sourceCode: string): ReadMedia {
     // The playable file URL is looked up at fetch time with the source's token (CDN URLs expire).
     const id = a.target?.id;
-    return { kind: 'video', ref: id ? `fbgraph-video:${sourceCode.toUpperCase()}:${id}` : `fbgraph-video-url`, sourceUrl: a.media?.source };
+    // Preserve the asset reference for videos already imported before source codes were renamed.
+    const mediaKey = legacySourceCode(sourceCode.toUpperCase());
+    return { kind: 'video', ref: id ? `fbgraph-video:${mediaKey}:${id}` : `fbgraph-video-url`, sourceUrl: a.media?.source };
   }
 
   async fetchMedia(media: { ref: string; sourceUrl?: string | null }): Promise<{ bytes: Buffer; mime: string }> {
