@@ -212,3 +212,25 @@ Chạy đối chiếu tại ASUS
      Nếu tệp chưa đến, ghi “chờ nhận tệp”. Nếu dữ liệu sai định dạng, sửa ở bản
      đối chiếu riêng rồi chạy lại. Các hồ sơ trung tâm chỉ thay đổi khi có bước
      nhập riêng về sau.
+
+8. Phản hồi từ ASUS sau khi đăng nhập Tailscale · 11:35 ngày 27/11/2026
+
+ASUS đã cài Tailscale 1.104.7 cho Windows từ bộ cài có chữ ký hợp lệ của
+Tailscale Inc. Dịch vụ đang chạy, người vận hành đã đăng nhập và thiết bị
+hiện online. Mạng riêng của tài khoản trên ASUS khác mạng trong URL đã nhận.
+Danh sách thiết bị ASUS nhìn thấy chưa có PC-Company. Lần thử lại từ ASUS
+vẫn dừng ở DNS, trước khi tới trang đăng nhập SeedingSys.
+
+Nhờ quản trị viên PC-Company chia sẻ riêng máy chủ với tài khoản Tailscale
+của người vận hành ASUS, hoặc mời tài khoản này vào đúng mạng và cấp quyền
+truy cập HTTPS tới dashboard. Gửi lời mời qua kênh riêng để chủ tài khoản
+chấp nhận. Khi quyền có hiệu lực, ASUS sẽ thử lại DNS, HTTPS và quyền xem
+danh bạ. Xem hướng dẫn tại https://tailscale.com/docs/features/sharing
+
+Tình trạng đối chiếu là “chờ nhận tệp”. ASUS đã chuẩn bị bản JSON riêng theo mục 7,
+giữ đúng thứ tự 29 dòng trong bảng, gồm 28 UID số và 1 dòng thiếu UID. Với
+5 dòng có số bài hoặc ghi chú nhưng thiếu nhãn rõ ràng về tình trạng sử dụng,
+trường retired được để null. Có thể gửi riêng bản xuất 22 hồ sơ để ASUS so
+theo UID trong lúc chờ quyền vào dashboard. ASUS sẽ kiểm tra SHA-256 của tệp
+trước khi chạy phép đối chiếu. Ba số trùng, cần thêm và còn vướng chưa xác
+định. Số hồ sơ đã nhập lên PC-Company trong đợt này vẫn là 0.
