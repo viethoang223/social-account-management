@@ -4,6 +4,8 @@ Repo của nhóm là [`viethoang223/social-account-management`](https://github.c
 
 Trong quy trình của nhóm, A là tài khoản mẹ của B. Dashboard hiện hành dùng mã N cho nguồn nội dung và mã B cho tài khoản đăng.
 
+Xem [báo cáo vận hành 25–27/11 và cấu hình quyền xem Reel từ 1.2.47](docs/BAO-CAO-VAN-HANH-2026-11-27.md) khi bàn giao các lô đang dừng hoặc kiểm tra bài đã đăng.
+
 ## 1. Chọn vai trò của máy
 
 | Nhu cầu | Cài trên máy này |
