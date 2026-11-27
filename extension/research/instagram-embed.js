@@ -30,8 +30,16 @@ export function readInstagramEmbed(html, shortcode) {
           const count = carousel ? (sidecar?.count ?? nodes?.length) : 1;
           const media = Array.isArray(nodes) ? nodes.flatMap(node => {
             const video = node?.is_video === true || node?.__typename === 'GraphVideo';
-            const image = node?.display_url ?? node?.display_resources?.at(-1)?.src;
-            const url = mediaUrl(video ? node?.video_url : image);
+            const images = Array.isArray(node?.display_resources) ? node.display_resources.flatMap(resource => {
+              const url = mediaUrl(resource?.src);
+              const width = Number(resource?.config_width ?? resource?.width);
+              const height = Number(resource?.config_height ?? resource?.height);
+              return url && width > 0 ? [{ url, width, height: height > 0 ? height : 0 }] : [];
+            }) : [];
+            images.sort((a, b) => b.width - a.width || b.height - a.height);
+            const fallback = Array.isArray(node?.display_resources)
+              ? mediaUrl(node.display_resources.findLast(resource => mediaUrl(resource?.src))?.src) : null;
+            const url = video ? mediaUrl(node?.video_url) : images[0]?.url ?? mediaUrl(node?.display_url) ?? fallback;
             return url ? [{ kind: video ? 'video' : 'image', url }] : [];
           }) : [];
           const declaredMediaCount = Number.isSafeInteger(count) && count >= (carousel ? 2 : 1) && count <= 20 ? count : null;

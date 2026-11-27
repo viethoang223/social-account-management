@@ -37,6 +37,14 @@ async function runComposer(target, action, caption, deadline, audience, media, s
   return value?.result ? value.documentId : null;
 }
 
+function samePublicationMedia(first, second) {
+  if (!first || !second) return !first && !second;
+  const a = first.files ?? [first];
+  const b = second.files ?? [second];
+  return first.format === second.format && a.length === b.length
+    && a.every((file, index) => file.mime === b[index].mime && file.size === b[index].size && file.checksum === b[index].checksum);
+}
+
 async function discardExpired() {
   const { draft } = await chrome.storage.session.get('draft');
   if (!draft) return;
@@ -174,9 +182,15 @@ async function execute(config, command, uid, deadline) {
   }
   if (command.action !== 'commit' || draft?.submitting || draft?.kind === 'comment' || draft?.sessionId !== command.sessionId
     || draft.uid !== uid || draft.audience !== audience || !draft.documentId
-    || JSON.stringify(draft.media) !== JSON.stringify(command.media)) return 'blocked';
+    || !samePublicationMedia(draft.media, command.media)) {
+    return { outcome: 'blocked', issue: 'Phiên bản nháp hoặc danh sách tệp đã thay đổi trước khi gửi.' };
+  }
   const tabTarget = { tabId: draft.tabId, documentIds: [draft.documentId] };
-  if (!await runComposer(tabTarget, 'inspect', command.caption, deadline, audience, command.media, command.sessionId)) return 'blocked';
+  if (!await runComposer(tabTarget, 'inspect', command.caption, deadline, audience, command.media, command.sessionId).catch(() => null)) {
+    const [details] = await chrome.scripting.executeScript({ target: tabTarget, func: composer,
+      args: ['diagnose', command.caption, deadline, audience, command.media ?? null, command.sessionId] }).catch(() => []);
+    return { outcome: 'blocked', issue: typeof details?.result === 'string' ? details.result : 'Tài liệu Chrome chứa bản nháp không còn mở.' };
+  }
   const requestedAt = Date.now();
   const permit = await api(config, { action: 'authorize', commandId: command.id });
   if (await observedUid() !== uid) return 'blocked';

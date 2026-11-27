@@ -26,14 +26,17 @@ const author = '123456789';
 const sender = '223456789';
 const message = 'Bình luận kiểm thử';
 
-it.skipIf(!executablePath)('selects Public in Reel settings and verifies it again before sending', async () => {
+it.skipIf(!executablePath).each([false, true])('selects Public in Reel settings and rechecks it before sending (separate label: %s)', async separate => {
   const file = Buffer.from('sample Reel');
   const media = { format: 'REEL', mime: 'video/mp4', size: file.length, checksum: createHash('sha256').update(file).digest('hex') };
+  const audience = separate
+    ? '<div><button id="audience">Who can see this reel?</button><span id="current">Friends</span></div>'
+    : '<button id="audience"><span id="current">Friends</span></button>';
   await withPage('https://www.facebook.com/profile.php?id=123456789', `<!doctype html>
     <button id="open">Create reel</button>
     <div id="draft" role="dialog" hidden><h2>Reel settings</h2>
       <textarea></textarea><input type="file" accept="video/*"><video width="80" height="80" hidden></video>
-      <button id="audience">Friends</button><button id="share">Share reel</button>
+      ${audience}<button id="share">Share reel</button>
     </div>
     <div id="picker" role="dialog" hidden><h2>Select audience</h2>
       <button id="public" role="radio" aria-checked="false"><span>Public</span></button><button id="done">Done</button>
@@ -45,7 +48,7 @@ it.skipIf(!executablePath)('selects Public in Reel settings and verifies it agai
       el('audience').onclick = () => el('picker').hidden = false;
       el('public').onclick = () => el('public').setAttribute('aria-checked','true');
       el('done').onclick = () => {
-        if (el('public').getAttribute('aria-checked') === 'true') el('audience').textContent = 'Public';
+        if (el('public').getAttribute('aria-checked') === 'true') el('current').textContent = 'Public';
         el('picker').hidden = true;
       };
       el('share').onclick = () => document.body.dataset.shared = 'yes';
@@ -55,11 +58,11 @@ it.skipIf(!executablePath)('selects Public in Reel settings and verifies it agai
     expect(await invoke(page, composer, 'stage-media', '', deadline, 'PUBLIC', media, 'reel-1',
       { offset: 0, data: file.toString('base64') })).toBe(true);
     expect(await invoke(page, composer, 'prepare', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(true);
-    expect(await page.locator('#audience').innerText()).toBe('Public');
-    await page.locator('#audience').evaluate(el => el.textContent = 'Friends');
+    expect(await page.locator('#current').innerText()).toBe('Public');
+    await page.locator('#current').evaluate(el => el.textContent = 'Friends');
     expect(await invoke(page, composer, 'commit', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(false);
     expect(await page.locator('body').getAttribute('data-shared')).toBeNull();
-    await page.locator('#audience').evaluate(el => el.textContent = 'Public');
+    await page.locator('#current').evaluate(el => el.textContent = 'Public');
     expect(await invoke(page, composer, 'commit', caption, deadline, 'PUBLIC', media, 'reel-1')).toBe(true);
     expect(await page.locator('body').getAttribute('data-shared')).toBe('yes');
   });
@@ -96,6 +99,11 @@ it.skipIf(!executablePath).each([false, true])('verifies the photo, caption and 
     expect(await invoke(page, composer, 'stage-media', '', deadline, 'PUBLIC', media, 'draft-1', { offset: 0, data: file.toString('base64') })).toBe(true);
     expect(await invoke(page, composer, 'prepare', caption, deadline, 'PUBLIC', media, 'draft-1')).toBe(true);
     expect(await page.locator('body').getAttribute('data-clicks')).toBeNull();
+    if (!direct) await page.locator('#review').evaluate(el => {
+      const replacement = el.cloneNode(true) as HTMLElement;
+      replacement.querySelector<HTMLButtonElement>('#submit')!.onclick = () => document.body.dataset.clicks = '1';
+      el.replaceWith(replacement);
+    });
     expect(await invoke(page, composer, 'commit', caption, deadline, 'PUBLIC', media, 'draft-1')).toBe(true);
     expect(await page.locator('body').getAttribute('data-clicks')).toBe('1');
   });
@@ -276,6 +284,20 @@ it('extracts only the matching Instagram Reel from embed metadata', () => {
     declaredMediaCount: 1, media: [{ kind: 'video', url: mp4 }] });
   expect(readInstagramEmbed(html, 'Absent')).toBeNull();
   expect(readInstagramEmbed(`<script>boot(${input(item('Correct', 'https://invalid.example/sample.mp4'))})</script>`, 'Correct').video).toBeNull();
+});
+
+it('uses the largest available image for each slide instead of a thumbnail in the embed', () => {
+  const cdn = 'https://scontent.cdninstagram.com/';
+  const node = (name: string) => ({
+    __typename: 'GraphImage', display_url: cdn + name + '-640.jpg',
+    display_resources: [1080, 1440, 640].map(width => ({ config_width: width, src: cdn + name + '-' + width + '.jpg' })),
+  });
+  const item = { shortcode: 'AlbumQuality', __typename: 'GraphSidecar', edge_media_to_caption: { edges: [] },
+    edge_sidecar_to_children: { edges: [{ node: node('first') }, { node: node('second') }] } };
+  const html = '<script>boot(' + JSON.stringify(JSON.stringify({ media: item })) + ');</script>';
+  expect(readInstagramEmbed(html, item.shortcode)).toMatchObject({ declaredMediaCount: 2, media: [
+    { kind: 'image', url: cdn + 'first-1440.jpg' }, { kind: 'image', url: cdn + 'second-1440.jpg' },
+  ] });
 });
 
 it.skipIf(!executablePath)('reads Instagram div comments and uses a permalink-bound Reel file', async () => {

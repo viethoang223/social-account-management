@@ -98,7 +98,7 @@ export class ExtensionPublishConnector implements PublishConnector {
       commit: async draft => {
         if (draft.id !== sessionId || draftCaption === undefined) throw new ConnectorError('PREVIEW_MISMATCH', 'Bản nháp đã thay đổi.');
         const result = await send('commit', draftCaption);
-        if (result.outcome !== 'clicked') throw new ConnectorError('TRANSIENT', 'Cần đối soát kết quả của lệnh đăng.', true);
+        if (result.outcome !== 'clicked') throw new ConnectorError('TRANSIENT', result.issue ?? 'Cần đối soát kết quả của lệnh đăng.', true);
         return { raw: { submittedBy: EXTENSION_CONNECTOR },
           ...(result.receipt && { permalink: result.receipt.permalink, externalPostId: result.receipt.externalId }) };
       },

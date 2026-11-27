@@ -117,8 +117,12 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
         .some(el => visible(el) && reelHeading.test(normalized(el.innerText))))) : dialogs().filter(root => editorOf(root));
     const found = roots.filter(root => !roots.some(other => other !== root && root.contains(other)));
     if (found.length === 1) return found[0];
-    const review = staged()?.review;
-    return !found.length && review && review.isConnected && visible(review) ? review : null;
+    const state = staged();
+    if (found.length || state?.session !== session || !state.review) return null;
+    if (state.review.isConnected && visible(state.review)) return state.review;
+    const replacement = reviewDialog();
+    if (replacement) state.review = replacement;
+    return replacement;
   };
   const postTitle = /^(?:Tạo bài viết|Create post|Cài đặt bài viết|Post settings|Xem lại bài viết|Review post)$/i;
   const closeHeader = /^(?:Đóng(?: hộp thoại của công cụ tạo)?|Close(?: (?:the )?(?:composer )?dialog)?|Quay lại|Trở về|Back)$/i;
@@ -137,17 +141,31 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
   const audienceLabels = button => labels(button).map(label => label
     .replace(/^(?:(?:Post audience|Đối tượng(?: của bài viết)?|Quyền riêng tư|Audience|Privacy)(?:\s*[:·]\s*|\s+)|Chỉnh sửa quyền riêng tư\.\s*Đang chia sẻ với\s+|Edit privacy\.\s*(?:Currently )?(?:shared|sharing) with\s+)/i, '')
     .replace(/\.$/, ''));
-  const audienceButton = root => {
+  const audienceChoices = element => audienceLabels(element).filter(label => audience.test(label)
+    || (reel && /^(?:Chỉ mình tôi|Công khai|Only me|Public|Bạn bè|Friends)\s/i.test(label)));
+  const audienceControl = root => {
     const found = controls(root).filter(button => button.matches('button,[role="button"]')
-      && audienceLabels(button).some(label => audience.test(label) || (reel && /^(?:Chỉ mình tôi|Công khai|Only me|Public|Bạn bè|Friends)\s/i.test(label))));
+      && audienceChoices(button).length > 0);
     const leaves = found.filter(button => !found.some(other => other !== button && button.contains(other)));
-    return leaves.length === 1 ? leaves[0] : null;
+    if (leaves.length === 1) return { button: leaves[0], choices: audienceChoices(leaves[0]) };
+    if (leaves.length || !reel) return null;
+    const name = /^(?:Select (?:audience|privacy)|(?:Edit|Change) (?:audience|privacy)|Who can see (?:your|this) reel\??|Chọn đối tượng|Chỉnh sửa (?:quyền riêng tư|đối tượng)|Ai có thể xem (?:thước phim|Reel)(?: này| của bạn)?\??)$/i;
+    const button = one(root, name);
+    const row = button?.parentElement;
+    if (!row || row === root) return null;
+    const selected = [...row.children].filter(el => el !== button && visible(el) && !controls(el).length).flatMap(audienceChoices);
+    return { button, choices: selected.length ? selected : audienceChoices(button) };
   };
   const audienceMatches = root => {
-    const button = audienceButton(root);
-    const choices = button ? audienceLabels(button).filter(label => audience.test(label)
-      || (reel && /^(?:Chỉ mình tôi|Công khai|Only me|Public|Bạn bè|Friends)\s/i.test(label))) : [];
-    return choices.length > 0 && choices.every(label => expected.test(label));
+    const choices = audienceControl(root)?.choices;
+    return !!choices?.length && choices.every(label => expected.test(label));
+  };
+  const reviewDialog = () => {
+    const matches = dialogs().filter(panel => /(?:post settings|review post|cài đặt bài viết|xem lại bài viết|create post|tạo bài viết)/i
+      .test((panel.getAttribute('aria-label') ?? '') + ' ' + panel.innerText) && !!one(panel, submit)
+      && audienceMatches(panel) && previewCaptionMatches(panel));
+    const innermost = matches.filter(panel => !matches.some(other => other !== panel && panel.contains(other)));
+    return innermost.length === 1 ? innermost[0] : null;
   };
   const hasMedia = root => [...root.querySelectorAll('video, [role="progressbar"]')].some(visible) || controls(root).some(el =>
     labels(el).some(label => /^(?:Xóa ảnh|Xóa video|Remove photo|Remove video|Ảnh\/video, đã thêm \d+|Photo\/video, \d+ added)/i.test(label)));
@@ -272,7 +290,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     if (media && !hasPreview(root)) return 'Facebook chưa hiện đúng ảnh hoặc Reel trong bản xem trước.';
     return 'Không xác nhận được nút Đăng.';
   }
-  if (action === 'inspect') return Boolean(verified(rootOf()));
+  if (action === 'inspect') return Boolean(await waitFor(() => verified(rootOf()), 3200));
   if (action === 'commit') {
     const root = rootOf();
     const button = verified(root);
@@ -341,11 +359,14 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     if (!root) return false;
   }
   if (!audienceMatches(root)) {
-    const button = audienceButton(root);
-    if (!button) return false;
+    const button = audienceControl(root)?.button;
+    if (!button) {
+      if (media && staged()) staged().diagnostic = 'Màn hình cài đặt chưa có một nút chọn đối tượng xác định.';
+      return false;
+    }
     button.click();
     const picker = () => {
-      const label = /^(?:Select audience|Post audience|Reel audience|Who can see your (?:post|reel)\?|Chọn đối tượng|Đối tượng của (?:bài viết|thước phim)|Ai có thể xem (?:bài viết|thước phim) của bạn\?)$/i;
+      const label = /^(?:Select audience|Post audience|Reel audience|Who can see (?:your|this) (?:post|reel)\??|Chọn đối tượng|Đối tượng của (?:bài viết|thước phim)|Ai có thể xem (?:bài viết|thước phim)(?: của bạn| này)?\??)$/i;
       const named = dialogs().filter(panel => label.test(normalized(panel.getAttribute('aria-label') ?? ''))
         || [...panel.querySelectorAll('h1,h2,h3,h4,[role="heading"]')].some(el => visible(el) && label.test(normalized(el.innerText))));
       const candidates = named.length ? named : otherDialogs(root);
@@ -464,13 +485,7 @@ export async function composer(action, caption, deadline, expectedAudience = 'ON
     }
     staged().diagnostic = 'Đã bấm Tiếp theo nhưng chưa xác nhận được ảnh, caption và Công khai ở màn Post settings.';
     path.next.click();
-    const review = await waitFor(() => {
-      const matches = dialogs().filter(panel => /(?:post settings|review post|cài đặt bài viết|xem lại bài viết|create post|tạo bài viết)/i
-        .test((panel.getAttribute('aria-label') ?? '') + ' ' + panel.innerText) && !!one(panel, submit)
-        && audienceMatches(panel) && previewCaptionMatches(panel));
-      const innermost = matches.filter(panel => !matches.some(other => other !== panel && panel.contains(other)));
-      return innermost.length === 1 ? innermost[0] : null;
-    }, 16_000);
+    const review = await waitFor(reviewDialog, 16_000);
     if (!review || staged()?.session !== session) return false;
     staged().review = review;
     staged().diagnostic = 'Post settings đã hiện đúng caption và Công khai nhưng chưa xác nhận được ảnh hoặc nút Đăng.';

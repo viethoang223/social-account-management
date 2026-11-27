@@ -388,7 +388,14 @@ export async function readInstagram(mode, requested, limit, deadline, checkpoint
     const image = all(scope, 'img').filter(el => !el.closest('header,aside') && inside(el))
       .sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height
         - a.getBoundingClientRect().width * a.getBoundingClientRect().height)[0];
-    const url = mediaUrl(image?.currentSrc || image?.src) || (canonical()?.id === expected.id && !next().length && mediaUrl(meta('og:image')));
+    const candidates = (image?.srcset ?? '').split(',').flatMap(entry => {
+      const [source, resolution] = entry.trim().split(/\s+/);
+      const url = mediaUrl(source);
+      const width = /^(\d+)w$/.exec(resolution ?? '')?.[1];
+      return url && width ? [{ url, width: Number(width) }] : [];
+    }).sort((a, b) => b.width - a.width);
+    const url = candidates[0]?.url || mediaUrl(image?.currentSrc || image?.src)
+      || (canonical()?.id === expected.id && !next().length && mediaUrl(meta('og:image')));
     return url ? { kind: 'image', url } : null;
   };
   const structured = Array.isArray(embed?.media) && embed.media.length === embed.declaredMediaCount
