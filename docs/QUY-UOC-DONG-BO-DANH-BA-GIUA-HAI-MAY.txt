@@ -133,3 +133,82 @@ nhãn “ngừng dùng” của ASUS, giữ lại cả hai giá trị để đ�
 trên PC-Company để trao đổi riêng. GitHub lưu các số tổng.
 
 Đợt này ASUS báo đã nhập 0 hồ sơ. Số trùng và số xung đột vẫn chờ so từng UID.
+
+7. ASUS tự cài, nhận tệp riêng và trả kết quả đối chiếu
+
+Chạy trên Windows của ASUS. Các tệp UID và bảng ASUS đặt ngoài thư mục Git.
+Cần PowerShell, Git và Node.js (có thể dùng bản đang chạy dashboard ASUS).
+Máy chỉ đối chiếu danh bạ. Phép thử hoàn tất khi có ba số thực tế cộng lại bằng 29.
+
+Cài Tailscale và kiểm tra đường truyền
+
+  1. Trong PowerShell kiểm tra dịch vụ bằng Get-Service Tailscale.
+     Nếu chưa cài, chạy lệnh sau và chấp nhận yêu cầu nâng quyền của Windows.
+       winget install --id Tailscale.Tailscale --exact --source winget
+     Nếu máy thiếu winget, dùng bộ cài chính thức cho Windows.
+     https://tailscale.com/docs/install/windows
+  2. Mở Tailscale từ Start. Chủ thiết bị hoàn tất đăng nhập nếu được yêu cầu.
+     Trong PowerShell mới, chạy lần lượt các lệnh sau.
+       $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+       & $ts status
+       & $ts ip -4
+     Xác nhận danh sách có PC-Company. Gửi riêng tên nút và địa chỉ IPv4 mà ASUS
+     vừa đọc cho đầu mối PC-Company để định danh máy nhận.
+  3. PC-Company gửi đúng bản xuất 22 hồ sơ qua Taildrop khi ASUS xuất hiện ở
+     danh sách đích nhận. Taildrop yêu cầu hai thiết bị thuộc cùng người dùng
+     Tailscale, đang chạy Tailscale và mạng đã bật Send Files. Nếu ASUS thuộc
+     người dùng khác, cung cấp một địa chỉ nhận tệp riêng của ASUS qua kênh
+     riêng để hai bên chuyển đúng người. https://tailscale.com/docs/features/taildrop
+  4. Trên ASUS, dùng thông báo nhận tệp của Tailscale để lấy tệp JSON. Đặt nó
+     cùng bảng ASUS trong một thư mục riêng, ví dụ %LOCALAPPDATA%\SeedingSys\handoff.
+     Đổi tên tệp vừa nhận thành PC-Company.json. Từ thư mục đó, kiểm tra tệp.
+       (Get-FileHash -LiteralPath .\PC-Company.json -Algorithm SHA256).Hash
+     Giá trị của bản xuất 22 hồ sơ ngày 27/11/2026 phải là
+       9A9645342BE41F67F35AE0124DF4E67EE61E48A0CC2347CEB74B923481B8B2FE
+     Nếu khác, yêu cầu lại đúng bản xuất trước khi đối chiếu.
+
+Chạy đối chiếu tại ASUS
+
+  5. Lấy script scripts/doi-chieu-danh-ba.mjs từ main của repo
+     viethoang223/social-account-management. Nếu checkout đang dùng cho dashboard
+     ASUS thuộc repo khác, có thể lấy riêng script bằng lệnh PowerShell dưới đây.
+     Chạy trong thư mục riêng đã chứa PC-Company.json.
+       Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/viethoang223/social-account-management/main/scripts/doi-chieu-danh-ba.mjs' -OutFile .\doi-chieu-danh-ba.mjs
+     Nếu repo yêu cầu đăng nhập, dùng bản sao repo đã xác thực để lấy cùng tệp.
+  6. Từ bảng 8 cột đã kiểm kê, tạo ASUS.json dạng mảng, một phần tử cho mỗi
+     dòng gốc. Giữ thứ tự 29 dòng để tra lại kết quả. Dùng ba trường sau.
+       code     Mã B cũ dạng chuỗi, hoặc null nếu hồ sơ chưa được cấp mã B.
+       uid      UID số giữ nguyên dạng chuỗi. Hồ sơ chỉ có username đặt null.
+       retired  true nếu nhãn gốc là ngừng dùng, false nếu còn dùng,
+                null nếu chưa rõ. Lấy nhãn này từ bảng kiểm kê ban đầu.
+     Ví dụ cấu trúc của riêng dòng thiếu UID, với trạng thái chưa xác nhận
+       { "code": null, "uid": null, "retired": null }
+     Giữ UID dạng văn bản từ đầu. Nếu Excel đã làm tròn số, lấy lại từ dữ liệu
+     gốc. Loại 5 hồ sơ mẫu. Giữ cả 8 hồ sơ ngừng dùng trong số 29 dòng.
+     Có thể chuyển cả bảng CSV UTF-8 một lần ngay trong PowerShell. Ví dụ sau
+     dùng tên cột trong mẫu ở mục 3. Đổi tên cột, dấu phân cách và nhãn cho
+     khớp với bảng thực tế. Đối chiếu 8 dòng ngừng dùng trước khi chạy bước 7.
+       $table = @(Import-Csv -LiteralPath .\ASUS.csv -Encoding UTF8)
+       $table[0].PSObject.Properties.Name
+       $rows = @(foreach ($r in $table) {
+         $state = ([string]$r.'Trạng thái ASUS').Trim()
+         $retired = switch ($state) {
+           { $_ -in 'die','ngừng dùng' } { $true; break }
+           { $_ -in 'còn dùng','đang dùng' } { $false; break }
+           default { $null }
+         }
+         [pscustomobject]@{code=$r.'Mã ASUS'; uid=$r.'UID hoặc tên người dùng'; retired=$retired}
+       })
+       ConvertTo-Json -InputObject $rows | Set-Content -LiteralPath .\ASUS.json -Encoding UTF8
+     Nếu ô UID chứa tên người dùng, công cụ cũng xếp dòng đó vào diện thiếu UID.
+  7. Trong thư mục riêng chạy
+       node .\doi-chieu-danh-ba.mjs .\PC-Company.json .\ASUS.json
+     Chương trình chỉ đọc tệp cục bộ. Một dòng có xung đột được tính vào
+     conVuong dù có khớp UID. Một UID mới đủ điều kiện được tính vào canThem.
+     Dòng dongASUS là số thứ tự trong mảng, bắt đầu từ 1. Dùng số này và lyDo
+     để tra riêng. Cờ enabled=false của PC không chứng minh tài khoản đã ngừng dùng.
+  8. Gửi lại ba số tổng hoặc ghi chúng dưới mục này kèm thời điểm.
+       Trùng ___ | Cần thêm ___ | Còn vướng ___ | Tổng 29
+     Nếu tệp chưa đến, ghi “chờ nhận tệp”. Nếu dữ liệu sai định dạng, sửa ở bản
+     đối chiếu riêng rồi chạy lại. Các hồ sơ trung tâm chỉ thay đổi khi có bước
+     nhập riêng về sau.
