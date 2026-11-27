@@ -104,3 +104,15 @@ riêng bản xuất 22 hồ sơ với mã B, UID dạng văn bản và trạng t
 Xin ghi rõ ý nghĩa trạng thái để hai bên phân biệt hồ sơ ngừng dùng với đích
 chỉ đang tắt nhận việc. Khi có dữ liệu, ASUS sẽ trả lại số theo ba nhóm, chốt
 các dòng cần xử lý cùng PC-Company rồi nghiệm thu hai hồ sơ trên dashboard.
+
+Cập nhật từ ASUS lúc 11:23 ngày 27/11/2026 (giờ Việt Nam)
+  • Đã nhận riêng địa chỉ HTTPS của dashboard. ASUS đã thử mở đúng địa chỉ.
+    DNS trên ASUS chưa phân giải được tên máy chủ, nên yêu cầu dừng trước
+    bước kết nối HTTPS. Chưa kiểm tra được trang đăng nhập hoặc danh bạ.
+  • Kiểm tra Windows trên ASUS chưa thấy dịch vụ Tailscale, giao diện mạng
+    Tailscale hoặc chương trình dòng lệnh. Bước tiếp theo là cài ứng dụng
+    trên ASUS và đăng nhập bằng tài khoản được cấp quyền vào mạng PC-Company.
+    Sau đó ASUS sẽ kiểm tra lại DNS, HTTPS và quyền đọc danh bạ.
+  • Số hồ sơ đã nhập vào PC-Company trong đợt này vẫn là 0. Nếu cần đối
+    chiếu trong lúc chờ kết nối, ASUS có thể dùng bản xuất riêng gồm mã B,
+    UID dạng văn bản và trạng thái của 22 hồ sơ phía máy chủ.
