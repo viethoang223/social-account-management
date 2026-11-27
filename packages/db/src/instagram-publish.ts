@@ -63,7 +63,14 @@ export async function resumeInstagramPublishBatch(context: DispatchContext, batc
     const result = parent.result as { batchPublication?: BatchPlan } | null;
     const plan = result?.batchPublication;
     if (!plan || plan.state !== 'PAUSED' || !plan.posts[plan.next]
-      || !['SOURCE_MEDIA_INCOMPLETE', 'SOURCE_REVISION_CHANGED'].includes(plan.reason ?? '')) return false;
+      || !['SOURCE_MEDIA_INCOMPLETE', 'SOURCE_REVISION_CHANGED', 'PREVIOUS_UNVERIFIED'].includes(plan.reason ?? '')) return false;
+    if (plan.reason === 'PREVIOUS_UNVERIFIED') {
+      const previous = plan.posts[plan.next - 1];
+      if (!previous || !await t.publication.findFirst({ where: { targetId: plan.targetId, sourcePostId: previous.id,
+        status: { in: ['PUBLISHED_VERIFIED', 'OPERATOR_CONFIRMED'] }, permalink: { not: null },
+        committedAt: { not: null }, verifiedAt: { not: null },
+      }, select: { id: true } })) return false;
+    }
     const current = await t.publication.findUnique({ where: { targetId_sourcePostId: {
       targetId: plan.targetId, sourcePostId: plan.posts[plan.next].id,
     } }, select: { status: true } });

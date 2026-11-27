@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { EXTENSION_CONNECTOR, isExtensionPublishAudience, type PublishSnapshot } from '@seedingsys/contracts';
+import { EXTENSION_CONNECTOR, isExtensionMediaFormat, isExtensionPublishAudience, validExtensionMedia, type PublishSnapshot } from '@seedingsys/contracts';
 import { accountResource, acquireLease, audit, movePublication, releaseLease, type Tx } from '@seedingsys/db';
 import { facebookPostLink, hashObject } from '@seedingsys/domain';
 
@@ -18,12 +18,15 @@ async function requestContext(t: Tx, id: string) {
     variant: { select: { snapshot: true } },
     post: { select: { externalId: true, permalink: true } },
   } });
-  if (!pub || pub.status !== 'NEEDS_OPERATOR' || pub.contentType !== 'TEXT' || !pub.committedAt || pub.permalink
+  if (!pub || !['UNKNOWN', 'NEEDS_OPERATOR'].includes(pub.status) || !pub.committedAt || pub.permalink
     || pub.target.connector !== EXTENSION_CONNECTOR || !pub.target.enabled || !/^\d{1,32}$/.test(pub.target.externalId)) return null;
   const uid = pub.target.externalId;
   const snap = pub.variant.snapshot as unknown as PublishSnapshot | null;
-  if (!snap?.caption.trim() || snap.contentType !== 'TEXT' || !isExtensionPublishAudience(snap.audience)
-    || snap.media.length || hashObject(snap) !== pub.snapshotHash) return null;
+  if (!snap?.caption.trim() || snap.contentType !== pub.contentType || !isExtensionPublishAudience(snap.audience)
+    || hashObject(snap) !== pub.snapshotHash) return null;
+  const validFormat = snap.contentType === 'TEXT' ? snap.media.length === 0
+    : isExtensionMediaFormat(snap.contentType) && validExtensionMedia(snap.contentType, snap.media);
+  if (!validFormat) return null;
   const submission = await t.publicationAttempt.findFirst({ where: { publicationId: id, kind: 'publish',
     connector: EXTENSION_CONNECTOR, committingAt: pub.committedAt }, orderBy: { attemptNo: 'desc' }, select: { evidence: true } });
   const recorded = submission?.evidence as { targetExternalId?: string; commitSignal?: { raw?: { submittedBy?: string } } } | null;
@@ -90,8 +93,12 @@ export async function finishPublicationVerify(t: Tx, input: { id: string; uid: s
     && !await t.publication.findFirst({ where: { targetId, id: { not: context.pub.id },
       OR: [{ externalPostId: link.id }, { permalink: link.url.href }] }, select: { id: true } })) {
     const permalink = link.url.href;
-    if (await movePublication(t, { id: context.pub.id, from: 'NEEDS_OPERATOR', to: 'PUBLISHED_VERIFIED', actor, now, fence: lease,
-      expectedJobVersion: context.pub.jobVersion, data: { permalink, externalPostId: link.id, verifiedAt: now, lastReason: null } })) {
+    const publication = { id: context.pub.id, actor, now, fence: lease, expectedJobVersion: context.pub.jobVersion };
+    const reconcilable = context.pub.status === 'NEEDS_OPERATOR' || await movePublication(t, {
+      ...publication, from: 'UNKNOWN', to: 'RECONCILING',
+    });
+    if (reconcilable && await movePublication(t, { ...publication, from: context.pub.status === 'UNKNOWN' ? 'RECONCILING' : 'NEEDS_OPERATOR',
+      to: 'PUBLISHED_VERIFIED', data: { permalink, externalPostId: link.id, verifiedAt: now, lastReason: null } })) {
       outcome = 'VERIFIED';
       await t.operatorTask.updateMany({ where: { publicationId: context.pub.id, kind: 'CONFIRM_RESULT', status: { in: ['OPEN', 'CLAIMED'] } },
         data: { status: 'DONE', resolvedBy: actor, resolution: { permalink, method: 'extension-reopened-post' }, closedAt: now } });
