@@ -30,6 +30,22 @@ export const researchBatch = (value: unknown) => Batch.safeParse(value).data;
 export const researchBatchIssue = (value: unknown) => z.object({ issue: ResearchIssueSchema }).safeParse(value).data?.issue ?? null;
 export const researchBatchJobs = (id: string) => ({ result: { path: ['batchProfileId'], equals: id } } satisfies Prisma.ExtensionRadarScanWhereInput);
 const assignedBatch = (targetId: string) => ({ result: { path: ['readerTargetId'], equals: targetId } } satisfies Prisma.ExtensionRadarScanWhereInput);
+
+async function nextPublicationResearch(t: Tx, targetId: string) {
+  const [row] = await t.$queryRaw<Array<{ id: string }>>`
+    SELECT pending.id FROM extension_radar_scans pending
+    JOIN extension_radar_scans batch ON batch.id::text = pending.result->>'batchProfileId'
+    CROSS JOIN LATERAL (SELECT batch.result->'batchPublication' AS plan) active_batch
+    JOIN source_posts post ON post.id::text = ((active_batch.plan->'posts')->((active_batch.plan->>'next')::int))->>'id'
+    WHERE pending.kind = 'RESEARCH_POST' AND pending.state = 'QUEUED'
+      AND pending.result->>'readerTargetId' = ${targetId}
+      AND pending.result->>'batch' = 'true'
+      AND pending.url = post.permalink AND post.archived_at IS NULL
+      AND ((active_batch.plan->>'state' = 'RUNNING' AND active_batch.plan->>'refreshMedia' = 'true')
+        OR (active_batch.plan->>'state' = 'PAUSED' AND active_batch.plan->>'reason' IN ('SOURCE_MEDIA_INCOMPLETE','SOURCE_REVISION_CHANGED')))
+    ORDER BY pending.created_at, pending.id LIMIT 1`;
+  return row ? t.extensionRadarScan.findUnique({ where: { id: row.id } }) : null;
+}
 export const instagramThreadJobs = (id: string) => ({ result: { path: ['instagramThread', 'postId'], equals: id } } satisfies Prisma.ExtensionRadarScanWhereInput);
 export const outsideInstagramThread = { OR: [{ result: { equals: Prisma.DbNull } },
   { result: { path: ['instagramThread'], equals: Prisma.AnyNull } }],
@@ -145,6 +161,7 @@ export async function claimResearch(t: Tx, targetId: string, installationId: str
   const scan = transferable ?? (canContinue ? (
     (instagramCommentsProtocol === 1 ? await t.extensionRadarScan.findFirst({ where: { ...queuedBatch,
       AND: [batchResearch, assignedBatch(targetId), pendingComments] }, orderBy }) : null)
+    ?? await nextPublicationResearch(t, targetId)
     ?? await t.extensionRadarScan.findFirst({ where: { ...queuedBatch,
       AND: [batchResearch, assignedBatch(targetId), noPendingComments] }, orderBy })
     ?? await t.extensionRadarScan.findFirst({ where: { ...queuedBatch, AND: [batchResearch,

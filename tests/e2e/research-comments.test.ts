@@ -179,6 +179,28 @@ it('reads a forty-post Instagram batch without giving publish work to either the
   expect(await h.db.publication.count()).toBe(0);
 });
 
+it('reads the pending publication before earlier archived items of the same Instagram batch', async () => {
+  const reader = await pair('B2', directory.profiles[1].uid, instagramProtocol);
+  const targetId = h.ids.targets.B2;
+  const sourceId = h.ids.sources.A1;
+  const { installationId } = await h.db.extensionBinding.findUniqueOrThrow({ where: { targetId } });
+  const url = 'https://www.instagram.com/p/NextToPublish/';
+  const now = h.clock.now();
+  const post = await h.db.sourcePost.create({ data: { sourceId, externalId: 'instagram:NextToPublish',
+    permalink: url, identityConfidence: 'HIGH', contentType: 'MULTI_PHOTO', firstSeenAt: now } });
+  const batch = await h.db.extensionRadarScan.create({ data: { targetId, installationId: installationId!,
+    url: 'https://www.instagram.com/example_creator/', state: 'COMPLETE', kind: 'RESEARCH_PROFILE',
+    createdAt: now, expiresAt: now, result: { batchPublication: {
+      state: 'PAUSED', reason: 'SOURCE_MEDIA_INCOMPLETE', posts: [{ id: post.id }], next: 0,
+    } } } });
+  await h.db.extensionRadarScan.createMany({ data: ['https://www.instagram.com/p/OlderJob/', url].map((postUrl, index) => ({
+    url: postUrl, targetId, installationId: installationId!, kind: 'RESEARCH_POST', state: 'QUEUED',
+    limit: 10, createdAt: new Date(+now + index), expiresAt: now,
+    result: { batch: true, batchProfileId: batch.id, readerTargetId: targetId },
+  })) });
+  await expect(reader.poll()).resolves.toMatchObject({ command: { url, kind: 'RESEARCH_POST' } });
+});
+
 it('recognizes a profile and grants reads only to the installed extension with the right protocol and UID', async () => {
   const old = await pair('B1', directory.profiles[0].uid, {});
   await expect(research.enqueue({ url: profile, limit: 3 }, admin)).rejects.toThrow('Post Research');
